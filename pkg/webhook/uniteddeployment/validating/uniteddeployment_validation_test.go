@@ -17,6 +17,7 @@ limitations under the License.
 package validating
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -25,6 +26,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/validation/field"
+	"k8s.io/utils/pointer"
 
 	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
 	appsv1beta1 "github.com/openkruise/kruise/apis/apps/v1beta1"
@@ -51,6 +54,34 @@ func TestValidateUnitedDeployment(t *testing.T) {
 	replicas3 := intstr.FromString("71%")
 	replicas4 := intstr.FromString("29%")
 	successCases := []appsv1alpha1.UnitedDeployment{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "abc", Namespace: metav1.NamespaceDefault},
+			Spec: appsv1alpha1.UnitedDeploymentSpec{
+				Selector: &metav1.LabelSelector{MatchLabels: validLabels},
+				Template: appsv1alpha1.SubsetTemplate{
+					StatefulSetTemplate: &appsv1alpha1.StatefulSetTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: validLabels,
+						},
+						Spec: apps.StatefulSetSpec{
+							Template: validPodTemplate.Template,
+						},
+					},
+				},
+				Topology: appsv1alpha1.Topology{
+					Subsets: []appsv1alpha1.Subset{
+						{
+							Name:     "subset1",
+							Replicas: &replicas1,
+						},
+						{
+							Name:     "subset2",
+							Replicas: &replicas1,
+						},
+					},
+				},
+			},
+		},
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "abc", Namespace: metav1.NamespaceDefault},
 			Spec: appsv1alpha1.UnitedDeploymentSpec{
@@ -424,6 +455,34 @@ func TestValidateUnitedDeployment(t *testing.T) {
 				},
 			},
 		},
+		"subset replicas type is percent when spec replicas not set": {
+			ObjectMeta: metav1.ObjectMeta{Name: "abc", Namespace: metav1.NamespaceDefault},
+			Spec: appsv1alpha1.UnitedDeploymentSpec{
+				Selector: &metav1.LabelSelector{MatchLabels: validLabels},
+				Template: appsv1alpha1.SubsetTemplate{
+					StatefulSetTemplate: &appsv1alpha1.StatefulSetTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: validLabels,
+						},
+						Spec: apps.StatefulSetSpec{
+							Template: validPodTemplate.Template,
+						},
+					},
+				},
+				Topology: appsv1alpha1.Topology{
+					Subsets: []appsv1alpha1.Subset{
+						{
+							Name:     "subset1",
+							Replicas: &replicas2,
+						},
+						{
+							Name:     "subset2",
+							Replicas: &replicas1,
+						},
+					},
+				},
+			},
+		},
 		"partition not exist": {
 			ObjectMeta: metav1.ObjectMeta{Name: "abc", Namespace: metav1.NamespaceDefault},
 			Spec: appsv1alpha1.UnitedDeploymentSpec{
@@ -583,6 +642,7 @@ func TestValidateUnitedDeployment(t *testing.T) {
 					field != "spec.topology.subsets" &&
 					field != "spec.topology.subsets[0]" &&
 					field != "spec.topology.subsets[0].name" &&
+					field != "spec.topology.subsets[0].replicas" &&
 					field != "spec.updateStrategy.partitions" &&
 					field != "spec.topology.subsets[0].nodeSelectorTerm.matchExpressions[0].values" {
 					t.Errorf("%s: missing prefix for: %v", k, errs[i])
@@ -973,11 +1033,100 @@ func TestValidateUnitedDeploymentUpdate(t *testing.T) {
 	}
 }
 
-func setTestDefault(obj *appsv1alpha1.UnitedDeployment) {
-	if obj.Spec.Replicas == nil {
-		obj.Spec.Replicas = new(int32)
-		*obj.Spec.Replicas = 1
+func Test(t *testing.T) {
+	cases := []struct {
+		name        string
+		replicas    int32
+		minReplicas []int32
+		maxReplicas []int32
+		errorHappen bool
+	}{
+		{
+			name:     "sum_all_min_replicas == replicas",
+			replicas: 10,
+			minReplicas: []int32{
+				2, 2, 2, 2, 2,
+			},
+			maxReplicas: []int32{
+				5, 5, 5, 5, -1,
+			},
+			errorHappen: false,
+		},
+		{
+			name:     "sum_all_min_replicas < replicas",
+			replicas: 14,
+			minReplicas: []int32{
+				2, 2, 2, 2, 2,
+			},
+			maxReplicas: []int32{
+				5, 5, 5, 5, -1,
+			},
+			errorHappen: false,
+		},
+		{
+			name:     "sum_all_min_replicas > replicas",
+			replicas: 5,
+			minReplicas: []int32{
+				2, 2, 2, 2, 2,
+			},
+			maxReplicas: []int32{
+				5, 5, 5, 5, -1,
+			},
+			errorHappen: false,
+		},
+		{
+			name:     "min_replicas > max_replicas",
+			replicas: 5,
+			minReplicas: []int32{
+				2, 2, 2, 6, 2,
+			},
+			maxReplicas: []int32{
+				5, 5, 5, 5, -1,
+			},
+			errorHappen: true,
+		},
+		{
+			name:     "all_max_replicas != nil",
+			replicas: 5,
+			minReplicas: []int32{
+				2, 2, 2, 2, 2,
+			},
+			maxReplicas: []int32{
+				5, 5, 5, 5, 5,
+			},
+			errorHappen: true,
+		},
 	}
+
+	for _, cs := range cases {
+		t.Run(cs.name, func(t *testing.T) {
+			ud := appsv1alpha1.UnitedDeployment{}
+			ud.Spec.Replicas = pointer.Int32(cs.replicas)
+			ud.Spec.Topology.Subsets = []appsv1alpha1.Subset{}
+			for index := range cs.minReplicas {
+				min := intstr.FromInt(int(cs.minReplicas[index]))
+				var max *intstr.IntOrString
+				if cs.maxReplicas[index] != -1 {
+					m := intstr.FromInt(int(cs.maxReplicas[index]))
+					max = &m
+				}
+				ud.Spec.Topology.Subsets = append(ud.Spec.Topology.Subsets, appsv1alpha1.Subset{
+					Name:        fmt.Sprintf("subset-%d", index),
+					MinReplicas: &min,
+					MaxReplicas: max,
+				})
+			}
+			errList := validateSubsetReplicas(&cs.replicas, ud.Spec.Topology.Subsets, field.NewPath("subset"))
+			if len(errList) > 0 && !cs.errorHappen {
+				t.Errorf("expected success, but got error: %v", errList)
+			} else if len(errList) == 0 && cs.errorHappen {
+				t.Errorf("expected error, but got success")
+			}
+		})
+	}
+}
+
+func setTestDefault(obj *appsv1alpha1.UnitedDeployment) {
 	if obj.Spec.RevisionHistoryLimit == nil {
 		obj.Spec.RevisionHistoryLimit = new(int32)
 		*obj.Spec.RevisionHistoryLimit = 10

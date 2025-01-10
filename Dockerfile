@@ -1,7 +1,7 @@
 # Build the manager and daemon binaries
 ARG BASE_IMAGE=alpine
-ARG BASE_IMAGE_VERSION=3.17
-FROM golang:1.18-alpine3.17 as builder
+ARG BASE_IMAGE_VERSION=3.19@sha256:ae65dbf8749a7d4527648ccee1fa3deb6bfcae34cbc30fc67aa45c44dcaa90ee
+FROM golang:1.20.14-alpine3.19@sha256:e47f121850f4e276b2b210c56df3fda9191278dd84a3a442bfe0b09934462a8f as builder
 
 WORKDIR /workspace
 # Copy the Go Modules manifests
@@ -13,20 +13,37 @@ COPY main.go main.go
 COPY apis/ apis/
 COPY cmd/ cmd/
 COPY pkg/ pkg/
-COPY vendor/ vendor/
 
 # Build
-RUN CGO_ENABLED=0 GO111MODULE=on go build -mod=vendor -a -o manager main.go \
-  && CGO_ENABLED=0 GO111MODULE=on go build -mod=vendor -a -o daemon ./cmd/daemon/main.go
+RUN CGO_ENABLED=0 GO111MODULE=on go build -a -o manager main.go \
+  && CGO_ENABLED=0 GO111MODULE=on go build -a -o daemon ./cmd/daemon/main.go
 
 ARG BASE_IMAGE
 ARG BASE_IMAGE_VERSION
 FROM ${BASE_IMAGE}:${BASE_IMAGE_VERSION}
 
-RUN apk add --no-cache ca-certificates=~20220614-r4 bash=~5.2.15-r0 expat=~2.5.0-r0 \
-  && rm -rf /var/cache/apk/*
-
 WORKDIR /
 COPY --from=builder /workspace/manager .
 COPY --from=builder /workspace/daemon ./kruise-daemon
+
+RUN set -eux; \
+    mkdir -p /log /tmp && \
+    chown -R nobody:nobody /log && \
+    chown -R nobody:nobody /tmp && \
+    chown -R nobody:nobody /manager && \
+    apk --no-cache --update upgrade && \
+    apk --no-cache add ca-certificates && \
+    apk --no-cache add tzdata && \
+    rm -rf /var/cache/apk/* && \
+    update-ca-certificates && \
+    echo "only include root and nobody user" && \
+    echo -e "root:x:0:0:root:/root:/bin/ash\nnobody:x:65534:65534:nobody:/:/sbin/nologin" | tee /etc/passwd && \
+    echo -e "root:x:0:root\nnobody:x:65534:" | tee /etc/group && \
+    rm -rf /usr/local/sbin/* && \
+    rm -rf /usr/local/bin/* && \
+    rm -rf /usr/sbin/* && \
+    rm -rf /usr/bin/* && \
+    rm -rf /sbin/* && \
+    rm -rf /bin/*
+
 ENTRYPOINT ["/manager"]

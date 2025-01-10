@@ -21,24 +21,29 @@ import (
 	"testing"
 	"time"
 
-	appspub "github.com/openkruise/kruise/apis/apps/pub"
-	policyv1alpha1 "github.com/openkruise/kruise/apis/policy/v1alpha1"
 	apps "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/tools/record"
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	utilpointer "k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/openkruise/kruise/apis/apps/pub"
+	appspub "github.com/openkruise/kruise/apis/apps/pub"
+	policyv1alpha1 "github.com/openkruise/kruise/apis/policy/v1alpha1"
+	"github.com/openkruise/kruise/pkg/util/controllerfinder"
 )
 
 func init() {
 	scheme = runtime.NewScheme()
-	_ = policyv1alpha1.AddToScheme(scheme)
-	_ = corev1.AddToScheme(scheme)
-	_ = apps.AddToScheme(scheme)
+	utilruntime.Must(policyv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(corev1.AddToScheme(scheme))
+	utilruntime.Must(apps.AddToScheme(scheme))
 }
 
 var (
@@ -271,13 +276,43 @@ func TestPodUnavailableBudgetValidatePod(t *testing.T) {
 				return pubStatus
 			},
 		},
+		{
+			name: "valid delete pod, pod state is inconsistent(inplace update not completed yet), ignore",
+			getPod: func() *corev1.Pod {
+				pod := podDemo.DeepCopy()
+				pod.Annotations[pub.InPlaceUpdateStateKey] = `{"nextContainerImages":{"main":"nginx:v2"}}`
+				return pod
+			},
+			getPub: func() *policyv1alpha1.PodUnavailableBudget {
+				pub := pubDemo.DeepCopy()
+				return pub
+			},
+			operation:   policyv1alpha1.PubDeleteOperation,
+			expectAllow: true,
+		},
+		{
+			name: "valid delete pod, pod declared no protect , ignore",
+			getPod: func() *corev1.Pod {
+				pod := podDemo.DeepCopy()
+				pod.Annotations[policyv1alpha1.PodPubNoProtectionAnnotation] = "true"
+				return pod
+			},
+			getPub: func() *policyv1alpha1.PodUnavailableBudget {
+				pub := pubDemo.DeepCopy()
+				return pub
+			},
+			operation:   policyv1alpha1.PubDeleteOperation,
+			expectAllow: true,
+		},
 	}
 
 	for _, cs := range cases {
 		t.Run(cs.name, func(t *testing.T) {
-			fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cs.getPub()).Build()
-			control := NewPubControl(fakeClient)
-			allow, _, err := PodUnavailableBudgetValidatePod(fakeClient, control, cs.getPod(), cs.operation, false)
+			fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cs.getPub()).
+				WithStatusSubresource(&policyv1alpha1.PodUnavailableBudget{}).Build()
+			finder := &controllerfinder.ControllerFinder{Client: fakeClient}
+			InitPubControl(fakeClient, finder, record.NewFakeRecorder(10))
+			allow, _, err := PodUnavailableBudgetValidatePod(cs.getPod(), cs.operation, "fake-user", false)
 			if err != nil {
 				t.Fatalf("PodUnavailableBudgetValidatePod failed: %s", err.Error())
 			}
@@ -383,9 +418,10 @@ func TestGetPodUnavailableBudgetForPod(t *testing.T) {
 	for _, cs := range cases {
 		t.Run(cs.name, func(t *testing.T) {
 			fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cs.getDeployment(), cs.getReplicaSet(), cs.getPub()).Build()
-			control := NewPubControl(fakeClient)
+			finder := &controllerfinder.ControllerFinder{Client: fakeClient}
+			InitPubControl(fakeClient, finder, record.NewFakeRecorder(10))
 			pod := cs.getPod()
-			pub, err := control.GetPubForPod(pod)
+			pub, err := PubControl.GetPubForPod(pod)
 			if err != nil {
 				t.Fatalf("GetPubForPod failed: %s", err.Error())
 			}

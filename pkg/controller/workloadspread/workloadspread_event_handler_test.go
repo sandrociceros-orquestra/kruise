@@ -160,7 +160,7 @@ func TestPodEventHandler(t *testing.T) {
 	createEvt := event.CreateEvent{
 		Object: createPod,
 	}
-	handler.Create(createEvt, createQ)
+	handler.Create(context.TODO(), createEvt, createQ)
 
 	if createQ.Len() != 1 {
 		t.Errorf("unexpected create event handle queue size, expected 1 actual %d", createQ.Len())
@@ -190,7 +190,7 @@ func TestPodEventHandler(t *testing.T) {
 		ObjectOld: oldPod,
 		ObjectNew: newPod,
 	}
-	handler.Update(updateEvt, updateQ)
+	handler.Update(context.TODO(), updateEvt, updateQ)
 
 	if updateQ.Len() != 1 {
 		t.Errorf("unexpected update event handle queue size, expected 1 actual %d", createQ.Len())
@@ -213,7 +213,7 @@ func TestPodEventHandler(t *testing.T) {
 	deleteEvt := event.DeleteEvent{
 		Object: deletePod,
 	}
-	handler.Delete(deleteEvt, deleteQ)
+	handler.Delete(context.TODO(), deleteEvt, deleteQ)
 
 	if deleteQ.Len() != 1 {
 		t.Errorf("unexpected delete event handle queue size, expected 1 actual %d", deleteQ.Len())
@@ -271,6 +271,7 @@ func TestGetWorkloadSpreadForCloneSet(t *testing.T) {
 				workloadSpread1 := workloadSpreadDemo.DeepCopy()
 				workloadSpread1.Name = "ws-1"
 				workloadSpread1.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+				workloadSpread1.Finalizers = []string{"finalizers.sigs.k8s.io/test"}
 
 				workloadSpread2 := workloadSpreadDemo.DeepCopy()
 				workloadSpread2.Name = "ws-2"
@@ -366,21 +367,20 @@ func TestGetWorkloadSpreadForCloneSet(t *testing.T) {
 
 	for _, cs := range cases {
 		t.Run(cs.name, func(t *testing.T) {
-			fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+			builder := fake.NewClientBuilder().WithScheme(scheme)
+			builder.WithStatusSubresource(&appsv1alpha1.WorkloadSpread{})
 			for _, ws := range cs.getWorkloadSpreads() {
 				newWorkloadSpread := ws.DeepCopy()
-				err := fakeClient.Create(context.TODO(), newWorkloadSpread)
-				if err != nil {
-					t.Fatalf("create WorkloadSpread failed: %s", err.Error())
-				}
+				builder.WithObjects(newWorkloadSpread)
 			}
+			fakeClient := builder.Build()
 
 			nsn := types.NamespacedName{
 				Namespace: cs.getCloneSet().Namespace,
 				Name:      cs.getCloneSet().Name,
 			}
 			handler := workloadEventHandler{Reader: fakeClient}
-			workloadSpread, _ := handler.getWorkloadSpreadForWorkload(nsn, controllerKruiseKindCS)
+			workloadSpread, _ := handler.getWorkloadSpreadForWorkload(nsn, controllerKruiseKindCS, nil)
 			expectTopology := cs.expectWorkloadSpread()
 
 			if expectTopology == nil {
@@ -448,6 +448,7 @@ func TestGetWorkloadSpreadForDeployment(t *testing.T) {
 				workloadSpread1 := ws.DeepCopy()
 				workloadSpread1.Name = "ws-1"
 				workloadSpread1.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+				workloadSpread1.Finalizers = []string{"finalizers.sigs.k8s.io/test"}
 
 				workloadSpread2 := ws.DeepCopy()
 				workloadSpread2.Name = "ws-2"
@@ -492,21 +493,19 @@ func TestGetWorkloadSpreadForDeployment(t *testing.T) {
 
 	for _, cs := range cases {
 		t.Run(cs.name, func(t *testing.T) {
-			fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+			builder := fake.NewClientBuilder().WithScheme(scheme)
 			for _, ws := range cs.getWorkloadSpreads() {
 				newWorkloadSpread := ws.DeepCopy()
-				err := fakeClient.Create(context.TODO(), newWorkloadSpread)
-				if err != nil {
-					t.Fatalf("create WorkloadSpread failed: %s", err.Error())
-				}
+				builder.WithObjects(newWorkloadSpread)
 			}
+			fakeClient := builder.Build()
 
 			nsn := types.NamespacedName{
 				Namespace: cs.getDeployment().Namespace,
 				Name:      cs.getDeployment().Name,
 			}
 			handler := workloadEventHandler{Reader: fakeClient}
-			workloadSpread, _ := handler.getWorkloadSpreadForWorkload(nsn, controllerKindDep)
+			workloadSpread, _ := handler.getWorkloadSpreadForWorkload(nsn, controllerKindDep, nil)
 			expectTopology := cs.expectWorkloadSpread()
 
 			if expectTopology == nil {
@@ -608,7 +607,7 @@ func TestGetWorkloadSpreadForJob(t *testing.T) {
 				Name:      cs.getJob().Name,
 			}
 			handler := workloadEventHandler{Reader: fakeClient}
-			workloadSpread, _ := handler.getWorkloadSpreadForWorkload(nsn, controllerKindJob)
+			workloadSpread, _ := handler.getWorkloadSpreadForWorkload(nsn, controllerKindJob, nil)
 			expectTopology := cs.expectWorkloadSpread()
 
 			if expectTopology == nil {
@@ -676,6 +675,7 @@ func TestGetWorkloadSpreadForReplicaSet(t *testing.T) {
 				workloadSpread1 := ws.DeepCopy()
 				workloadSpread1.Name = "ws-1"
 				workloadSpread1.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+				workloadSpread1.Finalizers = []string{"finalizers.sigs.k8s.io/test"}
 
 				workloadSpread2 := ws.DeepCopy()
 				workloadSpread2.Name = "ws-2"
@@ -720,21 +720,19 @@ func TestGetWorkloadSpreadForReplicaSet(t *testing.T) {
 
 	for _, cs := range cases {
 		t.Run(cs.name, func(t *testing.T) {
-			fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+			builder := fake.NewClientBuilder().WithScheme(scheme)
 			for _, ws := range cs.getWorkloadSpreads() {
 				newWorkloadSpread := ws.DeepCopy()
-				err := fakeClient.Create(context.TODO(), newWorkloadSpread)
-				if err != nil {
-					t.Fatalf("create WorkloadSpread failed: %s", err.Error())
-				}
+				builder.WithObjects(newWorkloadSpread)
 			}
+			fakeClient := builder.Build()
 
 			nsn := types.NamespacedName{
 				Namespace: cs.getReplicaset().Namespace,
 				Name:      cs.getReplicaset().Name,
 			}
 			handler := workloadEventHandler{Reader: fakeClient}
-			workloadSpread, _ := handler.getWorkloadSpreadForWorkload(nsn, controllerKindRS)
+			workloadSpread, _ := handler.getWorkloadSpreadForWorkload(nsn, controllerKindRS, nil)
 			expectTopology := cs.expectWorkloadSpread()
 
 			if expectTopology == nil {
@@ -802,6 +800,7 @@ func TestGetWorkloadSpreadForStatefulSet(t *testing.T) {
 				workloadSpread1 := ws.DeepCopy()
 				workloadSpread1.Name = "ws-1"
 				workloadSpread1.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+				workloadSpread1.Finalizers = []string{"finalizers.sigs.k8s.io/test"}
 
 				workloadSpread2 := ws.DeepCopy()
 				workloadSpread2.Name = "ws-2"
@@ -846,21 +845,19 @@ func TestGetWorkloadSpreadForStatefulSet(t *testing.T) {
 
 	for _, cs := range cases {
 		t.Run(cs.name, func(t *testing.T) {
-			fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+			builder := fake.NewClientBuilder().WithScheme(scheme)
 			for _, ws := range cs.getWorkloadSpreads() {
 				newWorkloadSpread := ws.DeepCopy()
-				err := fakeClient.Create(context.TODO(), newWorkloadSpread)
-				if err != nil {
-					t.Fatalf("create WorkloadSpread failed: %s", err.Error())
-				}
+				builder.WithObjects(newWorkloadSpread)
 			}
+			fakeClient := builder.Build()
 
 			nsn := types.NamespacedName{
 				Namespace: cs.getStatefulSet().Namespace,
 				Name:      cs.getStatefulSet().Name,
 			}
 			handler := workloadEventHandler{Reader: fakeClient}
-			workloadSpread, _ := handler.getWorkloadSpreadForWorkload(nsn, controllerKindSts)
+			workloadSpread, _ := handler.getWorkloadSpreadForWorkload(nsn, controllerKindSts, nil)
 			expectTopology := cs.expectWorkloadSpread()
 
 			if expectTopology == nil {
@@ -928,6 +925,7 @@ func TestGetWorkloadSpreadForAdvancedStatefulSet(t *testing.T) {
 				workloadSpread1 := ws.DeepCopy()
 				workloadSpread1.Name = "ws-1"
 				workloadSpread1.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+				workloadSpread1.Finalizers = []string{"finalizers.sigs.k8s.io/test"}
 
 				workloadSpread2 := ws.DeepCopy()
 				workloadSpread2.Name = "ws-2"
@@ -972,21 +970,19 @@ func TestGetWorkloadSpreadForAdvancedStatefulSet(t *testing.T) {
 
 	for _, cs := range cases {
 		t.Run(cs.name, func(t *testing.T) {
-			fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+			builder := fake.NewClientBuilder().WithScheme(scheme)
 			for _, ws := range cs.getWorkloadSpreads() {
 				newWorkloadSpread := ws.DeepCopy()
-				err := fakeClient.Create(context.TODO(), newWorkloadSpread)
-				if err != nil {
-					t.Fatalf("create WorkloadSpread failed: %s", err.Error())
-				}
+				builder.WithObjects(newWorkloadSpread)
 			}
+			fakeClient := builder.Build()
 
 			nsn := types.NamespacedName{
 				Namespace: cs.getStatefulSet().Namespace,
 				Name:      cs.getStatefulSet().Name,
 			}
 			handler := workloadEventHandler{Reader: fakeClient}
-			workloadSpread, _ := handler.getWorkloadSpreadForWorkload(nsn, controllerKruiseKindSts)
+			workloadSpread, _ := handler.getWorkloadSpreadForWorkload(nsn, controllerKruiseKindSts, nil)
 			expectTopology := cs.expectWorkloadSpread()
 
 			if expectTopology == nil {
@@ -1109,7 +1105,7 @@ func TestWorkloadEventHandlerForCreate(t *testing.T) {
 			createEvt := event.CreateEvent{
 				Object: cs.getWorkload(),
 			}
-			handler.Create(createEvt, createQ)
+			handler.Create(context.TODO(), createEvt, createQ)
 			if createQ.Len() != 1 {
 				t.Errorf("unexpected create event handle queue size, expected 1 actual %d", createQ.Len())
 				return
@@ -1230,7 +1226,7 @@ func TestWorkloadEventHandlerForDelete(t *testing.T) {
 			deleteEvt := event.DeleteEvent{
 				Object: cs.getWorkload(),
 			}
-			handler.Delete(deleteEvt, deleteQ)
+			handler.Delete(context.TODO(), deleteEvt, deleteQ)
 			if deleteQ.Len() != 1 {
 				t.Errorf("unexpected delete event handle queue size, expected 1 actual %d", deleteQ.Len())
 				return
@@ -1372,7 +1368,7 @@ func TestWorkloadEventHandlerForUpdate(t *testing.T) {
 				ObjectOld: oldWorkload,
 				ObjectNew: newWorkload,
 			}
-			handler.Update(updateEvt, updateQ)
+			handler.Update(context.TODO(), updateEvt, updateQ)
 			if updateQ.Len() != 1 {
 				t.Errorf("unexpected update event handle queue size, expected 1 actual %d", updateQ.Len())
 				return

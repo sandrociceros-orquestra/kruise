@@ -1,5 +1,262 @@
 # Change Log
 
+## v1.7.3
+> Change log since v1.7.2
+
+### Bug fixes
+- Fix kubeflow PyTorchJob create pod failure due to pod webhook. ([#1734](https://github.com/openkruise/kruise/pull/1864), [@zmberg](https://github.com/zmberg))
+
+## v1.7.2
+> Change log since v1.7.1
+
+### Advanced Workload
+- Support specified-delete in AdvancedStatefulSet and handle specified deleted pod under maxUnavailable constrain. ([#1734](https://github.com/openkruise/kruise/pull/1734), [@ABNER-1](https://github.com/ABNER-1))
+
+## v1.6.4
+> Change log since v1.6.3
+
+### Advanced Workload
+- Support specified-delete in AdvancedStatefulSet and handle specified deleted pod under maxUnavailable constrain. ([#1734](https://github.com/openkruise/kruise/pull/1734), [@ABNER-1](https://github.com/ABNER-1))
+
+## v1.5.5 
+> Chang log since v1.5.4
+
+### Advanced Workload
+- Support specified-delete in AdvancedStatefulSet and handle specified deleted pod under maxUnavailable constrain. ([#1734](https://github.com/openkruise/kruise/pull/1734), [@ABNER-1](https://github.com/ABNER-1))
+- Advanced StatefulSet maxUnavailable now counts unavailable pods with smaller ordinal in the update order during rolling upgrade. ([#1480](https://github.com/openkruise/kruise/pull/1480), [@Yesphet](https://github.com/Yesphet))
+
+## v1.7.1
+> Change log since v1.7.0
+
+### Bug fixes
+- When update crd webhook caBundle, if caBundle does not change, do not update crd again. ([#1717](https://github.com/openkruise/kruise/pull/1717), [@zmberg](https://github.com/zmberg))
+- Remove normal init container in pod's sidecarSet in-place update annotation. ([#1719](https://github.com/openkruise/kruise/pull/1719), [@zmberg](https://github.com/zmberg))
+
+## v1.7.0
+> Change log since v1.6.3
+
+### Key Features
+- When CloneSet volumeClaimTemplates changed, always recreate pods and related volumes. ([#1561](https://github.com/openkruise/kruise/pull/1561), [@ABNER-1](https://github.com/ABNER-1))
+- Bump K8s dependency to 1.28, and OpenKruise still works with Kubernetes Version >= 1.18. ([#1598](https://github.com/openkruise/kruise/pull/1598), [@ABNER-1](https://github.com/ABNER-1))
+- SidecarSet support k8s 1.28 Sidecar Containers(initContainers[x].restartPolicy=Always), and significantly improves the lifecycle management of Sidecar containers,
+refer to the [community documentation](https://kubernetes.io/docs/concepts/workloads/pods/sidecar-containers/) for details. ([#1613](https://github.com/openkruise/kruise/pull/1613), [@zmberg](https://github.com/zmberg))
+- ImagePullJob support for credential provider plugin, e.g. aws. ([#1383](https://github.com/openkruise/kruise/pull/1383), [@Kuromesi](https://github.com/Kuromesi))
+- Advanced StatefulSet support [start ordinal](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/#start-ordinal). ([#1643](https://github.com/openkruise/kruise/pull/1643), [@ABNER-1](https://github.com/ABNER-1))
+- Support webhook CA injection using external certification management tool, e.g. [cert-manager](https://cert-manager.io/). ([#1665](https://github.com/openkruise/kruise/pull/1665), [@Kuromesi](https://github.com/Kuromesi))
+- Kruise-daemon support cri-docker.sock for kubernetes clusters that use docker runtime. ([#1631](https://github.com/openkruise/kruise/pull/1631), [@BraceCY](https://github.com/BraceCY))
+- Advanced StatefulSet add pod index label `statefulset.kubernetes.io/pod-index`. ([#1667](https://github.com/openkruise/kruise/pull/1667), [@cr7258](https://github.com/cr7258))
+- Add Structured logging support. ([#1565](https://github.com/openkruise/kruise/pull/1565), [@MajLuu](https://github.com/MajLuu)); ([#1629](https://github.com/openkruise/kruise/pull/1629), [@jairuigou](https://github.com/jairuigou)); ([#1669](https://github.com/openkruise/kruise/pull/1669), [@AiRanthem](https://github.com/AiRanthem))
+
+### Performance Enhancement
+- Optimizing Pod SidecarSet webhook and controller performance when lots of namespace scoped sidecarSet exists ([#1547](https://github.com/openkruise/kruise/pull/1547), [@ls-2018](https://github.com/ls-2018))
+- Pod readiness controller use Patch instead of Update, thus reducing updating conflict when creating a large number of Pods. ([#1560](https://github.com/openkruise/kruise/pull/1560), [@BruceAko](https://github.com/BruceAko))
+
+### Bug fixes
+- Multi-domain Management
+  - Fixes workloadSpread validation message when using adaptive strategy type. ([#1553](https://github.com/openkruise/kruise/pull/1553), [@voron](https://github.com/voron))
+  - When feature-gate WorkloadSpread=false, the WorkloadSpread Controller is no longer started and the creation of workloadSpread CR is not allowed. ([#1566](https://github.com/openkruise/kruise/pull/1566), [@ls-2018](https://github.com/ls-2018))
+- Application Protection
+  - In some extreme scenarios, fix PodUnavailableBudget blocking KCM recycling Pods. ([#1567](https://github.com/openkruise/kruise/pull/1567), [@Spground](https://github.com/Spground))
+- Sidecar Container
+  - Fix SidecarSet invalid update status. ([#1641](https://github.com/openkruise/kruise/pull/1641), [@Spground](https://github.com/Spground))
+- Advanced Workload
+  - Fix potential nil panic in CloneSet validating webhook when Pod's controller owner ref is nil. ([#1678](https://github.com/openkruise/kruise/pull/1678), [@Spground](https://github.com/Spground))
+
+### Misc (cleanup and Flake)
+- Optimized Advanced StatefulSet code structure based on upstream community code(k8s 1.28). ([#1648](https://github.com/openkruise/kruise/pull/1648), [@ABNER-1](https://github.com/ABNER-1))
+- Reduce github workflow action permission. ([#1523](https://github.com/openkruise/kruise/pull/1523), [@furykerry](https://github.com/furykerry))
+- Bug fix for Makefile envtest failed. ([#1548](https://github.com/openkruise/kruise/pull/1548), [@BH4AWS](https://github.com/BH4AWS))
+- Fix UT TestRevisionManage. ([#1555](https://github.com/openkruise/kruise/pull/1555), [@furykerry](https://github.com/furykerry))
+- Upgrade opencontainers/runc (1.1.12) and controller-gen (0.14.0). ([#1562](https://github.com/openkruise/kruise/pull/1562), [@ppbits](https://github.com/ppbits))
+- Remove vendor directory. ([#1554](https://github.com/openkruise/kruise/pull/1554), [@liangyuanpeng](https://github.com/liangyuanpeng))
+- Add dependabot config for auto-update github-actions. ([#1570](https://github.com/openkruise/kruise/pull/1570), [@liangyuanpeng](https://github.com/liangyuanpeng))
+- Add permission of security-events write for ghaction golangci-lint. ([#1582](https://github.com/openkruise/kruise/pull/1582), [@liangyuanpeng](https://github.com/liangyuanpeng))
+- Fix vendor error while running command make docker-multiarch. ([#1601](https://github.com/openkruise/kruise/pull/1601), [@MichaelRren](https://github.com/MichaelRren))
+- Change e2e centos image from 6.7 to 7, then e2e can work on arm node. ([#1623](https://github.com/openkruise/kruise/pull/1623), [@Colvin-Y](https://github.com/Colvin-Y))
+- Fix slice declarations that are not initialized with zero length. ([#1628](https://github.com/openkruise/kruise/pull/1628), [@alingse](https://github.com/alingse))
+- Fix UT TestMatchRegistryAuths failed. ([#1583](https://github.com/openkruise/kruise/pull/1583), [@ABNER-1](https://github.com/ABNER-1))
+- Changes the scorecard badge link from old format to the Standard human-readable OpenSSF Scorecard Report. ([#1657](https://github.com/openkruise/kruise/pull/1657), [@harshitasao](https://github.com/harshitasao))
+
+## v1.6.3
+> Change log since v1.6.2
+
+### CVE FIX
+- fix potential security issues of dependent packages ([#1586](https://github.com/openkruise/kruise/pull/1586), [ABNER-1](https://github.com/ABNER-1)) ([#1591](https://github.com/openkruise/kruise/pull/1591), [ABNER-1](https://github.com/ABNER-1))
+
+## v1.6.2
+> Change log since v1.6.1
+
+### CloneSet
+- Fix new version of Pods released by cloneSet that doesn't match spec.updateStrategy.partition. ([#1549](https://github.com/openkruise/kruise/pull/1549), [@qswksp](https://github.com/qswksp))
+
+## v1.5.4
+> Chang log since v1.5.3
+
+### CloneSet
+- Fix new version of Pods released by cloneSet that doesn't match spec.updateStrategy.partition. ([#1549](https://github.com/openkruise/kruise/pull/1549), [@qswksp](https://github.com/qswksp))
+
+## v1.4.2
+> Change log since v1.4.1
+
+### CloneSet
+- Fix new version of Pods released by cloneSet that doesn't match spec.updateStrategy.partition. ([#1549](https://github.com/openkruise/kruise/pull/1549), [@qswksp](https://github.com/qswksp))
+
+## v1.6.1
+> Change log since v1.6.0
+
+### Upgrade Notice
+- FeatureGate PodWebhook=false will not disable ResourcesDeletionProtection. ([#1526](https://github.com/openkruise/kruise/pull/1526), [@zmberg](https://github.com/zmberg))
+- Update go.mod require k8s version from 1.29 to 1.26, and remove go mod replace. ([#1527](https://github.com/openkruise/kruise/pull/1527), [KaiShi](https://github.com/BH4AWS))
+
+### Advanced Workload
+- Fix when StatefulSet reserveOrdinals exist and whenScaled=Delete, scale down pvc failed. ([#1531](https://github.com/openkruise/kruise/pull/1531), [@zmberg](https://github.com/zmberg))
+
+## v1.5.3
+> Chang log since v1.5.2
+
+### Advanced Workload
+- Fix when StatefulSet reserveOrdinals exist and whenScaled=Delete, scale down pvc failed. ([#1531](https://github.com/openkruise/kruise/pull/1531), [@zmberg](https://github.com/zmberg))
+
+## v1.6.0
+> Change log since v1.5.2
+
+### Upgrade Notice
+
+> No, really, you must read this before you upgrade
+- OpenKruise no longer supports Kubernetes versions 1.16, 1.17.
+However it's still possible to use OpenKruise with Kubernetes versions 1.16 and 1.17 as long as KruiseDaemon is not enabled(install/upgrade kruise charts with featureGates="KruiseDaemon=false")
+- Kruise-Daemon will no longer support v1alpha2 CRI runtimes.
+However it's still possible to use OpenKruise on Kubernetes with nodes that only support v1alpha2 CRI as long as KruiseDaemon is not enabled(install/upgrade kruise charts with featureGates="KruiseDaemon=false")
+- OpenKruise leader election default to use leases mode. ([#1407](https://github.com/openkruise/kruise/pull/1407), [dsxing](https://github.com/dsxing))
+For users with OpenKruise version 1.3.0 or lower, please first upgrade your OpenKruise to version 1.4 or 1.5 before upgrading to 1.6.0, so as to avoid unexpected multiple leader problem during the installation.
+- Bump Kubernetes dependency to 1.26.10. ([#1511](https://github.com/openkruise/kruise/pull/1511), [KaiShi](https://github.com/BH4AWS))
+- To avoid potential circular dependency problem, features rely on webhook will no longer work for resources under kube-system,
+e.g. SidecarSet, WorkloadSpread, PodUnavailableBudget, ContainerLaunchPriority and PersistentPodState. ([#92](https://github.com/openkruise/charts/pull/92), [@hantmac](https://github.com/hantmac))
+
+### Key Features
+- Fix WorkloadSpread incorrect subset allocation after workload rolling updating. ([#1197](https://github.com/openkruise/kruise/pull/1197), [veophi](https://github.com/veophi))
+- ImagePullJob support force image pulling for images with the name as previous one. ([#1384](https://github.com/openkruise/kruise/pull/1384), [ls-2018](https://github.com/ls-2018))
+- Job Sidecar Terminator reports correct pod phase for sidecar containers with non-zero exit code. ([#1303](https://github.com/openkruise/kruise/pull/1303), [@diannaowa](https://github.com/diannaowa))
+- Support the deletion protection of service and ingress resources. ([#1269](https://github.com/openkruise/kruise/pull/1269), [@kevin1689-cloud](https://github.com/kevin1689-cloud))
+
+### Performance Enhancement
+- Optimize PodProbeMarker performance. ([#1430](https://github.com/openkruise/kruise/pull/1430), [ls-2018](https://github.com/ls-2018))
+- Optimize container launch priority performance. ([#1490](https://github.com/openkruise/kruise/pull/1490), [FillZpp](https://github.com/FillZpp))
+
+### Other Changes
+
+- Enhanced Operation
+  - PodProbeMarker:  Container probe support Tcp probing. ([#1474](https://github.com/openkruise/kruise/pull/1474), [KaiShi](https://github.com/BH4AWS))
+  - PodProbeMarker:  Sync podCondition when probe message of probeStates changed. ([#1479](https://github.com/openkruise/kruise/pull/1479), [chrisliu1995](https://github.com/chrisliu1995))
+  - PersistentPodState: Fix the problem that PersistentPodState can't get spec.replicas from unstructured object. ([#1462](https://github.com/openkruise/kruise/pull/1462), [0xgj](https://github.com/0xgj))
+  - Fix PodProbeMarker feature gate dependency . ([#1429](https://github.com/openkruise/kruise/pull/1429), [ls-2018](https://github.com/ls-2018))
+
+- Advanced Workload
+  - Enforce Advanced DaemonSet spec.selector is immutable. ([#1505](https://github.com/openkruise/kruise/pull/1505), [@hantmac](https://github.com/hantmac))
+  - Advanced StatefulSet maxUnavailable now counts unavailable pods with smaller ordinal in the update order during rolling upgrade. ([#1480](https://github.com/openkruise/kruise/pull/1480), [@Yesphet](https://github.com/Yesphet))
+  - Fix EphemeralJob event handler for deleting object. ([#1401](https://github.com/openkruise/kruise/pull/1401), [FillZpp](https://github.com/FillZpp))
+
+- Sidecar Container
+  - Fix pod annotations injection abnormal for SidecarSet. ([#1453](https://github.com/openkruise/kruise/pull/1453), [@a932846905](https://github.com/a932846905))
+
+- Application Protection
+  - PodUnavailableBudget ignore deletion of not ready or inconsistent pods. ([#1512](https://github.com/openkruise/kruise/pull/1512), [Spground](https://github.com/Spground))
+
+- Others
+  - Replace 'github.com/pkg/errors' with the standard Go library 'errors'. ([#1518](https://github.com/openkruise/kruise/pull/1518), [dongjiang1989](https://github.com/dongjiang1989))
+  - Upgrade minimum docker api version from 1.23 to 1.24. ([#1510](https://github.com/openkruise/kruise/pull/1510), [hantmac](https://github.com/hantmac))
+  - Add UT in controller_revision_test file. ([#1457](https://github.com/openkruise/kruise/pull/1457), [xiangpingjiang](https://github.com/xiangpingjiang))
+  - BroadcastJob controller define some parameters as Constant. ([#1414](https://github.com/openkruise/kruise/pull/1414), [lilongfeng0902](https://github.com/lilongfeng0902))
+  - Kruise-daemon enable pprof. ([#1416](https://github.com/openkruise/kruise/pull/1416), [dsxing](https://github.com/dsxing))
+  - Remove deprecated 'io/ioutil' pkg. ([#1404](https://github.com/openkruise/kruise/pull/1404), [testwill](https://github.com/testwill))
+  - Fix unnecessary use of fmt.Sprintf. ([#1403](https://github.com/openkruise/kruise/pull/1403), [testwill](https://github.com/testwill))
+
+## v1.5.2
+> Chang log since v1.5.1
+
+### CVE FIX: Enhance kruise-daemon security ([#1482](https://github.com/openkruise/kruise/pull/1482), [veophi](https://github.com/veophi))
+
+### Start kruise-manager as a non-root user
+We start kruise-manger with a non-root user to further enhance the security of kruise-manager. ([#1491](https://github.com/openkruise/kruise/pull/1491), [@zmberg](https://github.com/zmberg))
+
+## v1.5.1
+> Chang log since v1.5.0
+
+In version 1.5.1, the focus was on enhancing UnitedDeployment and addressing various bug fixes:
+
+- Add the ability to plan the lower and upper bound of capacity to the subsets in UnitedDeployment ([#1428](https://github.com/openkruise/kruise/pull/1428), [@veophi](https://github.com/veophi))
+
+- Fix unexpected job recreation by adding controller-revision-hash label for ImageListPullJob. ([#1441](https://github.com/openkruise/kruise/pull/1428), [@veophi](https://github.com/veophi))
+
+- Add prometheus metrics for pub and deletion protection to enhance observability for pub & deletion protection ([#1398](https://github.com/openkruise/kruise/pull/1398), [@zmberg](https://github.com/zmberg))
+
+- Add enable pprof flag for kruise daemon, now you can disable the pprof of kruise daemon ([#1416](https://github.com/openkruise/kruise/pull/1416), [@chengjoey](https://github.com/chengjoey))
+
+- Fix SidecarSet upgrade exception for UpdateExpectations to solve the problem of updating the image of the sidecar container ([#1435](https://github.com/openkruise/kruise/pull/1435), [@zmberg](https://github.com/zmberg)])
+
+- add audit log for pub and deletion protection to enhance observability for pub & deletion protection  ([#1438](https://github.com/openkruise/kruise/pull/1438), [@zmberg](https://github.com/zmberg)])
+
+## v1.5.0
+> Change log since v1.4.0
+
+### Upgrade Notice
+
+> No, really, you must read this before you upgrade
+
+- **Disable** following feature-gates by default: PreDownloadImageForInPlaceUpdate([#1244](https://github.com/openkruise/kruise/pull/1224), [@zmberg](https://github.com/zmberg)), ImagePullJobGate([#1357](https://github.com/openkruise/kruise/pull/1357), [@zmberg](https://github.com/zmberg)), DeletionProtectionForCRDCascadingGate([#1365](https://github.com/openkruise/kruise/pull/1365), [@zmberg](https://github.com/zmberg)), and ResourceDistributionGate([#1360](https://github.com/openkruise/kruise/pull/1360/files), [@zmberg](https://github.com/zmberg))
+- Bump Kubernetes dependency to 1.24.16, Golang version to 1.19([#1354](https://github.com/openkruise/kruise/pull/1354), [Kuromesi](https://github.com/Kuromesi))
+
+### Key Features: Enhanced Multi-Domain Management
+- WorkloadSpread:
+  - Support any customized workloads that have `scale` sub-resource. ([#1286](https://github.com/openkruise/kruise/pull/1286), [veophi](https://github.com/veophi))
+  - Add validation for subset patch field. ([#1237](https://github.com/openkruise/kruise/pull/1237), [chengleqi](https://github.com/chengleqi))
+- UnitedDeployment:
+  - Support `scale` sub-resource. ([#1314](https://github.com/openkruise/kruise/pull/1314)), [diannaowa](https://github.com/diannaowa))
+  - Support `patch` field for each subset. ([#1266](https://github.com/openkruise/kruise/pull/1266), [chengleqi](https://github.com/chengleqi))
+  - Optimize UnitedDeployment replicas settings. ([#1247](https://github.com/openkruise/kruise/pull/1247), [y-ykcir](https://github.com/y-ykcir))
+
+### ImagePreDownload
+- ImageListPullJob:
+  - Many users have the need for batch pre-download images, and the current approach, i.e., ImagePullJob, has a relatively high threshold for use, We added a new CRD ImageListPullJob to batch pre-download images.
+    You just write a range of images in one ImageListPullJob CR, its controller will generate corresponding ImagePullJob CR for each image automatically. ([1222](https://github.com/openkruise/kruise/pull/1222), [@diannaowa](https://github.com/diannaowa))
+- ImagePullJob:
+  - Fix the matching logic for the imagePullSecret in ImagePullJob. ([#1241](https://github.com/openkruise/kruise/pull/1241), [#1357](https://github.com/openkruise/kruise/pull/1357))
+  - Advanced Workload pre-download image support attach metadata in ImagePullJob. ([#1246](https://github.com/openkruise/kruise/pull/1246), [YTGhost](https://github.com/YTGhost))
+
+### Advanced Workload
+- SidecarSet:
+  - Add condition and event for not upgradable pods when updating. ([#1309](https://github.com/openkruise/kruise/pull/1309), [MarkLux](https://github.com/MarkLux))
+  - Take effect of shareVolumePolicy on initContainers. ([#1229](https://github.com/openkruise/kruise/pull/1229), [y-ykcir](https://github.com/y-ykcir))
+  - Allow sidecar containers to mount serviceAccountToken type volume. ([#1238](https://github.com/openkruise/kruise/pull/1238), [y-ykcir](https://github.com/y-ykcir))
+  - SidecarSet updateStrategy support priorityStrategy. ([#1325](https://github.com/openkruise/kruise/pull/1325), [y-ykcir](https://github.com/y-ykcir))
+- BroadcastJob:
+  - Make OnFailure as default restartPolicy. ([#1149](https://github.com/openkruise/kruise/pull/1149), [Shubhamurkade](https://github.com/Shubhamurkade))
+  - Fix BroadcastJob doesn't make pod on node that has erased taint. ([#1204](https://github.com/openkruise/kruise/pull/1204), [weldonlwz](https://github.com/weldonlwz))
+- CloneSet & StatefulSet:
+  - Regard the pod at preparing update state as update revision when scaling. ([#1290](https://github.com/openkruise/kruise/pull/1290), [veophi](https://github.com/veophi))
+  - Add `updatedAvailableReplicas` field in status. ([#1317](https://github.com/openkruise/kruise/pull/1317), [nitishchauhan0022](https://github.com/nitishchauhan0022))
+
+### Kruise Daemon
+- Connecting to Pouch runtime via CRI interface. ([#1232](https://github.com/openkruise/kruise/pull/1232), [@zmberg](https://github.com/zmberg))
+- Compatible with v1 and v1alpha2 CRI API version. ([#1354](https://github.com/openkruise/kruise/pull/1354), [veophi](https://github.com/veophi))
+
+### ResourceProtection
+- Reject Namespace deletion when PVCs are included under NS. ([#1228](https://github.com/openkruise/kruise/pull/1228), [kevin1689-cloud](https://github.com/kevin1689-cloud))
+
+And some bugs were fixed by
+([#1238](https://github.com/openkruise/kruise/pull/1238), [y-ykcir](https://github.com/y-ykcir)),
+([#1335](https://github.com/openkruise/kruise/pull/1335), [ls-2018](https://github.com/ls-2018)),
+([#1301](https://github.com/openkruise/kruise/pull/1301), [wangwu50](https://github.com/wangwu50)),
+([#1395](https://github.com/openkruise/kruise/pull/1301), [ywdxz](https://github.com/ywdxz)),
+([#1304](https://github.com/openkruise/kruise/pull/1304), [kevin1689-cloud](https://github.com/kevin1689-cloud)),
+([#1348](https://github.com/openkruise/kruise/pull/1348), [#1343](https://github.com/openkruise/kruise/pull/1343), [Colvin-Y](https://github.com/Colvin-Y)),
+thanks!
+
+## v1.4.1
+> Change log since v1.4.0
+
+### CVE FIX: Enhance kruise-daemon security ([#1482](https://github.com/openkruise/kruise/pull/1482), [veophi](https://github.com/veophi))
+
 ## v1.4.0
 
 > Change log since v1.3.0
@@ -49,6 +306,12 @@ For more detail, please refer to its [proposal](https://github.com/openkruise/kr
 - Fix config/samples/apps_v1alpha1_uniteddeployment.yaml invalid image. ([#1198](https://github.com/openkruise/kruise/pull/1198), [@chengleqi](https://github.com/chengleqi))
 - Change kruise base image to alpine. ([#1166](https://github.com/openkruise/kruise/pull/1166), [@fengshunli](https://github.com/fengshunli))
 - PersistentPodState support custom workload (like statefulSet). ([#1063](https://github.com/openkruise/kruise/pull/1063), [@baxiaoshi](https://github.com/baxiaoshi))
+
+## v1.3.1
+
+> Change log since v1.3.0
+
+### CVE FIX: Enhance kruise-daemon security ([#1482](https://github.com/openkruise/kruise/pull/1482), [veophi](https://github.com/veophi))
 
 ## v1.3.0
 
