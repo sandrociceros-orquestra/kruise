@@ -25,20 +25,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openkruise/kruise/apis"
-	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
-	kruiseclientset "github.com/openkruise/kruise/pkg/client/clientset/versioned"
-	kruisefake "github.com/openkruise/kruise/pkg/client/clientset/versioned/fake"
-	kruiseinformers "github.com/openkruise/kruise/pkg/client/informers/externalversions"
-	kruiseappsinformers "github.com/openkruise/kruise/pkg/client/informers/externalversions/apps/v1alpha1"
-	kruiseExpectations "github.com/openkruise/kruise/pkg/util/expectations"
-	"github.com/openkruise/kruise/pkg/util/lifecycle"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+
 	apps "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/clock"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apiserver/pkg/storage/names"
 	"k8s.io/client-go/informers"
@@ -56,7 +49,17 @@ import (
 	"k8s.io/kubernetes/pkg/controller"
 	"k8s.io/kubernetes/pkg/controller/daemon/util"
 	"k8s.io/kubernetes/pkg/securitycontext"
+	testingclock "k8s.io/utils/clock/testing"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	"github.com/openkruise/kruise/apis"
+	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
+	kruiseclientset "github.com/openkruise/kruise/pkg/client/clientset/versioned"
+	kruisefake "github.com/openkruise/kruise/pkg/client/clientset/versioned/fake"
+	kruiseinformers "github.com/openkruise/kruise/pkg/client/informers/externalversions"
+	kruiseappsinformers "github.com/openkruise/kruise/pkg/client/informers/externalversions/apps/v1alpha1"
+	kruiseExpectations "github.com/openkruise/kruise/pkg/util/expectations"
+	"github.com/openkruise/kruise/pkg/util/lifecycle"
 )
 
 var (
@@ -64,7 +67,7 @@ var (
 )
 
 func init() {
-	_ = apis.AddToScheme(scheme.Scheme)
+	utilruntime.Must(apis.AddToScheme(scheme.Scheme))
 }
 
 func newDaemonSet(name string) *appsv1alpha1.DaemonSet {
@@ -117,10 +120,10 @@ func newFakePodControl() *fakePodControl {
 	}
 }
 
-func (f *fakePodControl) CreatePods(namespace string, template *corev1.PodTemplateSpec, object runtime.Object, controllerRef *metav1.OwnerReference) error {
+func (f *fakePodControl) CreatePods(ctx context.Context, namespace string, template *corev1.PodTemplateSpec, object runtime.Object, controllerRef *metav1.OwnerReference) error {
 	f.Lock()
 	defer f.Unlock()
-	if err := f.FakePodControl.CreatePods(namespace, template, object, controllerRef); err != nil {
+	if err := f.FakePodControl.CreatePods(ctx, namespace, template, object, controllerRef); err != nil {
 		return fmt.Errorf("failed to create pod for DaemonSet")
 	}
 
@@ -140,15 +143,15 @@ func (f *fakePodControl) CreatePods(namespace string, template *corev1.PodTempla
 
 	ds := object.(*appsv1alpha1.DaemonSet)
 	dsKey, _ := controller.KeyFunc(ds)
-	f.expectations.CreationObserved(dsKey)
+	f.expectations.CreationObserved(klog.FromContext(ctx), dsKey)
 
 	return nil
 }
 
-func (f *fakePodControl) DeletePod(namespace string, podID string, object runtime.Object) error {
+func (f *fakePodControl) DeletePod(ctx context.Context, namespace string, podID string, object runtime.Object) error {
 	f.Lock()
 	defer f.Unlock()
-	if err := f.FakePodControl.DeletePod(namespace, podID, object); err != nil {
+	if err := f.FakePodControl.DeletePod(ctx, namespace, podID, object); err != nil {
 		return fmt.Errorf("failed to delete pod %q", podID)
 	}
 	pod, ok := f.podIDMap[podID]
@@ -160,7 +163,7 @@ func (f *fakePodControl) DeletePod(namespace string, podID string, object runtim
 
 	ds := object.(*appsv1alpha1.DaemonSet)
 	dsKey, _ := controller.KeyFunc(ds)
-	f.expectations.DeletionObserved(dsKey)
+	f.expectations.DeletionObserved(klog.FromContext(ctx), dsKey)
 
 	return nil
 }
@@ -210,7 +213,7 @@ func newTestController(initialObjects ...runtime.Object) (*daemonSetsController,
 		informerFactory.Apps().V1().ControllerRevisions(),
 		client,
 		kruiseClient,
-		flowcontrol.NewFakeBackOff(50*time.Millisecond, 500*time.Millisecond, clock.NewFakeClock(time.Now())),
+		flowcontrol.NewFakeBackOff(50*time.Millisecond, 500*time.Millisecond, testingclock.NewFakeClock(time.Now())),
 	)
 
 	fakeRecorder := record.NewFakeRecorder(100)
@@ -334,10 +337,10 @@ func clearExpectations(t *testing.T, manager *daemonSetsController, ds *appsv1al
 		t.Errorf("Could not get key for daemon.")
 		return
 	}
-	manager.expectations.DeleteExpectations(key)
+	manager.expectations.DeleteExpectations(klog.FromContext(context.TODO()), key)
 
 	now := manager.failedPodsBackoff.Clock.Now()
-	hash, _ := currentDSHash(manager, ds)
+	hash, _ := currentDSHash(context.TODO(), manager, ds)
 	// log all the pods in the store
 	var lines []string
 	for _, obj := range manager.podStore.List() {
@@ -366,7 +369,7 @@ func clearExpectations(t *testing.T, manager *daemonSetsController, ds *appsv1al
 	}
 	sort.Strings(lines)
 	for _, line := range lines {
-		klog.Info(line)
+		klog.InfoS(line)
 	}
 }
 

@@ -17,9 +17,15 @@ limitations under the License.
 package sync
 
 import (
+	"encoding/json"
 	"flag"
 	"math"
 	"reflect"
+
+	v1 "k8s.io/api/core/v1"
+	intstrutil "k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/klog/v2"
+	"k8s.io/utils/integer"
 
 	appspub "github.com/openkruise/kruise/apis/apps/pub"
 	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
@@ -30,10 +36,6 @@ import (
 	utilfeature "github.com/openkruise/kruise/pkg/util/feature"
 	"github.com/openkruise/kruise/pkg/util/lifecycle"
 	"github.com/openkruise/kruise/pkg/util/specifieddelete"
-	v1 "k8s.io/api/core/v1"
-	intstrutil "k8s.io/apimachinery/pkg/util/intstr"
-	"k8s.io/klog/v2"
-	"k8s.io/utils/integer"
 )
 
 func init() {
@@ -86,22 +88,34 @@ func (e expectationDiffs) isEmpty() bool {
 	return reflect.DeepEqual(e, expectationDiffs{})
 }
 
+// String implement this to print information in klog
+func (e expectationDiffs) String() string {
+	b, _ := json.Marshal(e)
+	return string(b)
+}
+
+type IsPodUpdateFunc func(pod *v1.Pod, updateRevision string) bool
+
 // This is the most important algorithm in cloneset-controller.
 // It calculates the pod numbers to scaling and updating for current CloneSet.
-func calculateDiffsWithExpectation(cs *appsv1alpha1.CloneSet, pods []*v1.Pod, currentRevision, updateRevision string) (res expectationDiffs) {
+func calculateDiffsWithExpectation(cs *appsv1alpha1.CloneSet, pods []*v1.Pod, currentRevision, updateRevision string, isPodUpdate IsPodUpdateFunc) (res expectationDiffs) {
 	coreControl := clonesetcore.New(cs)
 	replicas := int(*cs.Spec.Replicas)
 	var partition, maxSurge, maxUnavailable, scaleMaxUnavailable int
 	if cs.Spec.UpdateStrategy.Partition != nil {
 		if pValue, err := util.CalculatePartitionReplicas(cs.Spec.UpdateStrategy.Partition, cs.Spec.Replicas); err != nil {
 			// TODO: maybe, we should block pod update if partition settings is wrong
-			klog.Errorf("CloneSet %s/%s partition value is illegal", cs.Namespace, cs.Name)
+			klog.ErrorS(err, "CloneSet partition value was illegal", "cloneSet", klog.KObj(cs))
 		} else {
 			partition = pValue
 		}
 	}
 	if cs.Spec.UpdateStrategy.MaxSurge != nil {
 		maxSurge, _ = intstrutil.GetValueFromIntOrPercent(cs.Spec.UpdateStrategy.MaxSurge, replicas, true)
+		if cs.Spec.UpdateStrategy.Paused {
+			maxSurge = 0
+			klog.V(3).InfoS("Because CloneSet updateStrategy.paused=true, and Set maxSurge=0", "cloneSet", klog.KObj(cs))
+		}
 	}
 	maxUnavailable, _ = intstrutil.GetValueFromIntOrPercent(
 		intstrutil.ValueOrDefault(cs.Spec.UpdateStrategy.MaxUnavailable, intstrutil.FromString(appsv1alpha1.DefaultCloneSetMaxUnavailable)), replicas, maxSurge == 0)
@@ -115,20 +129,30 @@ func calculateDiffsWithExpectation(cs *appsv1alpha1.CloneSet, pods []*v1.Pod, cu
 		if res.isEmpty() {
 			return
 		}
-		klog.V(1).Infof("Calculate diffs for CloneSet %s/%s, replicas=%d, partition=%d, maxSurge=%d, maxUnavailable=%d,"+
-			" allPods=%d, newRevisionPods=%d, newRevisionActivePods=%d, oldRevisionPods=%d, oldRevisionActivePods=%d,"+
-			" unavailableNewRevisionCount=%d, unavailableOldRevisionCount=%d,"+
-			" preDeletingNewRevisionCount=%d, preDeletingOldRevisionCount=%d, toDeleteNewRevisionCount=%d, toDeleteOldRevisionCount=%d."+
-			" Result: %+v",
-			cs.Namespace, cs.Name, replicas, partition, maxSurge, maxUnavailable,
-			len(pods), newRevisionCount, newRevisionActiveCount, oldRevisionCount, oldRevisionActiveCount,
-			unavailableNewRevisionCount, unavailableOldRevisionCount,
-			preDeletingNewRevisionCount, preDeletingOldRevisionCount, toDeleteNewRevisionCount, toDeleteOldRevisionCount,
-			res)
+		klog.V(1).InfoS("Calculate diffs for CloneSet", "cloneSet", klog.KObj(cs), "replicas", replicas, "partition", partition,
+			"maxSurge", maxSurge, "maxUnavailable", maxUnavailable, "allPodCount", len(pods), "newRevisionCount", newRevisionCount,
+			"newRevisionActiveCount", newRevisionActiveCount, "oldrevisionCount", oldRevisionCount, "oldRevisionActiveCount", oldRevisionActiveCount,
+			"unavailableNewRevisionCount", unavailableNewRevisionCount, "unavailableOldRevisionCount", unavailableOldRevisionCount,
+			"preDeletingNewRevisionCount", preDeletingNewRevisionCount, "preDeletingOldRevisionCount", preDeletingOldRevisionCount,
+			"toDeleteNewRevisionCount", toDeleteNewRevisionCount, "toDeleteOldRevisionCount", toDeleteOldRevisionCount,
+			"enabledPreparingUpdateAsUpdate", utilfeature.DefaultFeatureGate.Enabled(features.PreparingUpdateAsUpdate), "useDefaultIsPodUpdate", isPodUpdate == nil,
+			"result", res)
 	}()
 
+	// If PreparingUpdateAsUpdate feature gate is enabled:
+	// - when scaling, we hope the preparing-update pods should be regarded as update-revision pods,
+	//   the isPodUpdate parameter will be IsPodUpdate function in pkg/util/revision/revision.go file;
+	// - when updating, we hope the preparing-update pods should be regarded as current-revision pods,
+	//   the isPodUpdate parameter will be EqualToRevisionHash function by default;
+	if isPodUpdate == nil {
+		isPodUpdate = func(pod *v1.Pod, updateRevision string) bool {
+			return clonesetutils.EqualToRevisionHash("", pod, updateRevision)
+		}
+	}
+
 	for _, p := range pods {
-		if clonesetutils.EqualToRevisionHash("", p, updateRevision) {
+		if isPodUpdate(p, updateRevision) {
+
 			newRevisionCount++
 
 			switch state := lifecycle.GetPodLifecycleState(p); state {

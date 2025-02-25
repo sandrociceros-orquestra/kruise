@@ -24,6 +24,7 @@ import (
 	"github.com/openkruise/kruise/pkg/controller/containerrecreaterequest"
 	"github.com/openkruise/kruise/pkg/controller/daemonset"
 	"github.com/openkruise/kruise/pkg/controller/ephemeraljob"
+	"github.com/openkruise/kruise/pkg/controller/imagelistpulljob"
 	"github.com/openkruise/kruise/pkg/controller/imagepulljob"
 	"github.com/openkruise/kruise/pkg/controller/nodeimage"
 	"github.com/openkruise/kruise/pkg/controller/nodepodprobe"
@@ -65,13 +66,14 @@ func init() {
 	controllerAddFuncs = append(controllerAddFuncs, sidecarterminator.Add)
 	controllerAddFuncs = append(controllerAddFuncs, podprobemarker.Add)
 	controllerAddFuncs = append(controllerAddFuncs, nodepodprobe.Add)
+	controllerAddFuncs = append(controllerAddFuncs, imagelistpulljob.Add)
 }
 
 func SetupWithManager(m manager.Manager) error {
 	for _, f := range controllerAddFuncs {
 		if err := f(m); err != nil {
 			if kindMatchErr, ok := err.(*meta.NoKindMatchError); ok {
-				klog.Infof("CRD %v is not installed, its controller will perform noops!", kindMatchErr.GroupKind)
+				klog.InfoS("CRD is not installed, its controller will perform noops!", "CRD", kindMatchErr.GroupKind)
 				continue
 			}
 			return err

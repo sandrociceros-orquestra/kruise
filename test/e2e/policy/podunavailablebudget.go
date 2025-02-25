@@ -23,11 +23,6 @@ import (
 
 	"github.com/onsi/ginkgo"
 	"github.com/onsi/gomega"
-	appspub "github.com/openkruise/kruise/apis/apps/pub"
-	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
-	policyv1alpha1 "github.com/openkruise/kruise/apis/policy/v1alpha1"
-	kruiseclientset "github.com/openkruise/kruise/pkg/client/clientset/versioned"
-	"github.com/openkruise/kruise/test/e2e/framework"
 	corev1 "k8s.io/api/core/v1"
 	policy "k8s.io/api/policy/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,6 +31,12 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/retry"
 	utilpointer "k8s.io/utils/pointer"
+
+	appspub "github.com/openkruise/kruise/apis/apps/pub"
+	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
+	policyv1alpha1 "github.com/openkruise/kruise/apis/policy/v1alpha1"
+	kruiseclientset "github.com/openkruise/kruise/pkg/client/clientset/versioned"
+	"github.com/openkruise/kruise/test/e2e/framework"
 )
 
 var _ = SIGDescribe("PodUnavailableBudget", func() {
@@ -64,7 +65,7 @@ var _ = SIGDescribe("PodUnavailableBudget", func() {
 			tester.DeletePubs(ns)
 			tester.DeleteDeployments(ns)
 			tester.DeleteCloneSets(ns)
-			sidecarTester.DeleteSidecarSets()
+			sidecarTester.DeleteSidecarSets(ns)
 		})
 
 		ginkgo.It("PodUnavailableBudget selector no matched pods", func() {
@@ -618,7 +619,9 @@ var _ = SIGDescribe("PodUnavailableBudget", func() {
 				},
 			}
 			ginkgo.By(fmt.Sprintf("Creating SidecarSet %s", sidecarSet.Name))
-			sidecarSet, _ = sidecarTester.CreateSidecarSet(sidecarSet)
+			var err error
+			sidecarSet, err = sidecarTester.CreateSidecarSet(sidecarSet)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			time.Sleep(time.Second)
 
 			// create deployment
@@ -629,7 +632,7 @@ var _ = SIGDescribe("PodUnavailableBudget", func() {
 
 			time.Sleep(time.Second)
 			// check sidecarSet inject sidecar container
-			ginkgo.By(fmt.Sprintf("check sidecarSet inject sidecar container and pub status"))
+			ginkgo.By("check sidecarSet inject sidecar container and pub status")
 			pods, err := sidecarTester.GetSelectorPods(deployment.Namespace, deployment.Spec.Selector)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			pod := pods[0]
@@ -652,14 +655,14 @@ var _ = SIGDescribe("PodUnavailableBudget", func() {
 			}, 30*time.Second, time.Second).Should(gomega.Equal(expectStatus))
 
 			// update sidecar container failed image
-			ginkgo.By(fmt.Sprintf("update sidecar container failed image"))
+			ginkgo.By("update sidecar container failed image")
 			sidecarSet, err = kc.AppsV1alpha1().SidecarSets().Get(context.TODO(), sidecarSet.Name, metav1.GetOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			sidecarSet.Spec.Containers[0].Image = InvalidImage
 			sidecarTester.UpdateSidecarSet(sidecarSet)
 
 			// wait 1 seconds, and check sidecarSet upgrade block
-			ginkgo.By(fmt.Sprintf("wait 1 seconds, and check sidecarSet upgrade block"))
+			ginkgo.By("wait 1 seconds, and check sidecarSet upgrade block")
 			time.Sleep(time.Second)
 			except := &appsv1alpha1.SidecarSetStatus{
 				MatchedPods:      5,
@@ -691,7 +694,7 @@ var _ = SIGDescribe("PodUnavailableBudget", func() {
 			}, 20*time.Second, time.Second).Should(gomega.Equal(expectStatus))
 
 			// update sidecar container success image
-			ginkgo.By(fmt.Sprintf("update sidecar container success image"))
+			ginkgo.By("update sidecar container success image")
 			sidecarSet, err = kc.AppsV1alpha1().SidecarSets().Get(context.TODO(), sidecarSet.Name, metav1.GetOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			sidecarSet.Spec.Containers[0].Image = NewNginxImage
@@ -699,7 +702,7 @@ var _ = SIGDescribe("PodUnavailableBudget", func() {
 
 			time.Sleep(time.Second)
 			// check sidecarSet upgrade success
-			ginkgo.By(fmt.Sprintf("check sidecarSet upgrade success"))
+			ginkgo.By("check sidecarSet upgrade success")
 			except = &appsv1alpha1.SidecarSetStatus{
 				MatchedPods:      5,
 				UpdatedPods:      5,
@@ -1121,7 +1124,7 @@ var _ = SIGDescribe("PodUnavailableBudget", func() {
 
 			time.Sleep(time.Second)
 			// check sidecarSet inject sidecar container
-			ginkgo.By(fmt.Sprintf("check sidecarSet inject sidecar container and pub status"))
+			ginkgo.By("check sidecarSet inject sidecar container and pub status")
 			pods, err := sidecarTester.GetSelectorPods(cloneset.Namespace, cloneset.Spec.Selector)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			pod := pods[0]
@@ -1150,7 +1153,7 @@ var _ = SIGDescribe("PodUnavailableBudget", func() {
 			cloneset, err = kc.AppsV1alpha1().CloneSets(cloneset.Namespace).Update(context.TODO(), cloneset, metav1.UpdateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			// update sidecar container success image
-			ginkgo.By(fmt.Sprintf("update sidecar container success image"))
+			ginkgo.By("update sidecar container success image")
 			sidecarSet.Spec.Containers[0].Image = NewNginxImage
 			sidecarTester.UpdateSidecarSet(sidecarSet)
 			time.Sleep(time.Second)

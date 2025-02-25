@@ -22,11 +22,6 @@ import (
 	"testing"
 	"time"
 
-	appspub "github.com/openkruise/kruise/apis/apps/pub"
-	policyv1alpha1 "github.com/openkruise/kruise/apis/policy/v1alpha1"
-	"github.com/openkruise/kruise/pkg/control/pubcontrol"
-	"github.com/openkruise/kruise/pkg/control/sidecarcontrol"
-	"github.com/openkruise/kruise/pkg/util"
 	admissionv1 "k8s.io/api/admission/v1"
 	apps "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -34,17 +29,26 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/tools/record"
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/pkg/apis/policy"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+
+	appspub "github.com/openkruise/kruise/apis/apps/pub"
+	policyv1alpha1 "github.com/openkruise/kruise/apis/policy/v1alpha1"
+	"github.com/openkruise/kruise/pkg/control/pubcontrol"
+	"github.com/openkruise/kruise/pkg/control/sidecarcontrol"
+	"github.com/openkruise/kruise/pkg/util"
+	"github.com/openkruise/kruise/pkg/util/controllerfinder"
 )
 
 func init() {
 	scheme = runtime.NewScheme()
-	_ = policyv1alpha1.AddToScheme(scheme)
-	_ = corev1.AddToScheme(scheme)
+	utilruntime.Must(policyv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(corev1.AddToScheme(scheme))
 }
 
 var (
@@ -470,13 +474,15 @@ func TestValidateUpdatePodForPub(t *testing.T) {
 
 	for _, cs := range cases {
 		t.Run(cs.name, func(t *testing.T) {
-			decoder, _ := admission.NewDecoder(scheme)
-			fClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cs.pub()).Build()
+			decoder := admission.NewDecoder(scheme)
+			fClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cs.pub()).
+				WithStatusSubresource(&policyv1alpha1.PodUnavailableBudget{}).Build()
 			podHandler := PodCreateHandler{
-				Client:     fClient,
-				Decoder:    decoder,
-				pubControl: pubcontrol.NewPubControl(fClient),
+				Client:  fClient,
+				Decoder: decoder,
 			}
+			finder := &controllerfinder.ControllerFinder{Client: fClient}
+			pubcontrol.InitPubControl(fClient, finder, record.NewFakeRecorder(10))
 			oldPodRaw := runtime.RawExtension{
 				Raw: []byte(util.DumpJSON(cs.oldPod())),
 			}
@@ -665,13 +671,15 @@ func TestValidateEvictPodForPub(t *testing.T) {
 
 	for _, cs := range cases {
 		t.Run(cs.name, func(t *testing.T) {
-			decoder, _ := admission.NewDecoder(scheme)
-			fClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cs.pub(), cs.newPod()).Build()
+			decoder := admission.NewDecoder(scheme)
+			fClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cs.pub(), cs.newPod()).
+				WithStatusSubresource(&policyv1alpha1.PodUnavailableBudget{}).Build()
 			podHandler := PodCreateHandler{
-				Client:     fClient,
-				Decoder:    decoder,
-				pubControl: pubcontrol.NewPubControl(fClient),
+				Client:  fClient,
+				Decoder: decoder,
 			}
+			finder := &controllerfinder.ControllerFinder{Client: fClient}
+			pubcontrol.InitPubControl(fClient, finder, record.NewFakeRecorder(10))
 			evictionRaw := runtime.RawExtension{
 				Raw: []byte(util.DumpJSON(cs.eviction())),
 			}
@@ -821,13 +829,15 @@ func TestValidateDeletePodForPub(t *testing.T) {
 
 	for _, cs := range cases {
 		t.Run(cs.name, func(t *testing.T) {
-			decoder, _ := admission.NewDecoder(scheme)
-			fClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cs.pub(), cs.newPod()).Build()
+			decoder := admission.NewDecoder(scheme)
+			fClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cs.pub(), cs.newPod()).
+				WithStatusSubresource(&policyv1alpha1.PodUnavailableBudget{}).Build()
 			podHandler := PodCreateHandler{
-				Client:     fClient,
-				Decoder:    decoder,
-				pubControl: pubcontrol.NewPubControl(fClient),
+				Client:  fClient,
+				Decoder: decoder,
 			}
+			finder := &controllerfinder.ControllerFinder{Client: fClient}
+			pubcontrol.InitPubControl(fClient, finder, record.NewFakeRecorder(10))
 			deletionRaw := runtime.RawExtension{
 				Raw: []byte(util.DumpJSON(cs.deletion())),
 			}

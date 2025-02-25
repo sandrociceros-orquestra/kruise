@@ -207,7 +207,7 @@ func newReconciler(mgr manager.Manager) (reconcile.Reconciler, error) {
 func add(mgr manager.Manager, r reconcile.Reconciler) error {
 	// Create a new controller
 	c, err := controller.New("daemonset-controller", mgr, controller.Options{
-		Reconciler: r, MaxConcurrentReconciles: concurrentReconciles,
+		Reconciler: r, MaxConcurrentReconciles: concurrentReconciles, CacheSyncTimeout: kruiseutil.GetControllerCacheSyncTimeout(),
 		RateLimiter: ratelimiter.DefaultControllerRateLimiter()})
 	if err != nil {
 		return err
@@ -215,49 +215,50 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 
 	dsc := r.(*ReconcileDaemonSet)
 
+	logger := klog.FromContext(context.TODO())
 	// Watch for changes to DaemonSet
-	err = c.Watch(&source.Kind{Type: &appsv1alpha1.DaemonSet{}}, &handler.EnqueueRequestForObject{}, predicate.Funcs{
-		CreateFunc: func(e event.CreateEvent) bool {
-			ds := e.Object.(*appsv1alpha1.DaemonSet)
-			klog.V(4).Infof("Adding DaemonSet %s/%s", ds.Namespace, ds.Name)
+	err = c.Watch(source.Kind(mgr.GetCache(), &appsv1alpha1.DaemonSet{}, &handler.TypedEnqueueRequestForObject[*appsv1alpha1.DaemonSet]{}, predicate.TypedFuncs[*appsv1alpha1.DaemonSet]{
+		CreateFunc: func(e event.TypedCreateEvent[*appsv1alpha1.DaemonSet]) bool {
+			ds := e.Object
+			klog.V(4).InfoS("Adding DaemonSet", "daemonSet", klog.KObj(ds))
 			return true
 		},
-		UpdateFunc: func(e event.UpdateEvent) bool {
-			oldDS := e.ObjectOld.(*appsv1alpha1.DaemonSet)
-			newDS := e.ObjectNew.(*appsv1alpha1.DaemonSet)
+		UpdateFunc: func(e event.TypedUpdateEvent[*appsv1alpha1.DaemonSet]) bool {
+			oldDS := e.ObjectOld
+			newDS := e.ObjectNew
 			if oldDS.UID != newDS.UID {
-				dsc.expectations.DeleteExpectations(keyFunc(oldDS))
+				dsc.expectations.DeleteExpectations(logger, keyFunc(oldDS))
 			}
-			klog.V(4).Infof("Updating DaemonSet %s/%s", newDS.Namespace, newDS.Name)
+			klog.V(4).InfoS("Updating DaemonSet", "daemonSet", klog.KObj(newDS))
 			return true
 		},
-		DeleteFunc: func(e event.DeleteEvent) bool {
-			ds := e.Object.(*appsv1alpha1.DaemonSet)
-			klog.V(4).Infof("Deleting DaemonSet %s/%s", ds.Namespace, ds.Name)
-			dsc.expectations.DeleteExpectations(keyFunc(ds))
+		DeleteFunc: func(e event.TypedDeleteEvent[*appsv1alpha1.DaemonSet]) bool {
+			ds := e.Object
+			klog.V(4).InfoS("Deleting DaemonSet", "daemonSet", klog.KObj(ds))
+			dsc.expectations.DeleteExpectations(logger, keyFunc(ds))
 			newPodForDSCache.Delete(ds.UID)
 			return true
 		},
-	})
+	}))
 	if err != nil {
 		return err
 	}
 
 	// Watch for changes to Node.
-	err = c.Watch(&source.Kind{Type: &corev1.Node{}}, &nodeEventHandler{reader: mgr.GetCache()})
+	err = c.Watch(source.Kind(mgr.GetCache(), &corev1.Node{}, &nodeEventHandler{reader: mgr.GetCache()}))
 	if err != nil {
 		return err
 	}
 
 	// Watch for changes to Pod created by DaemonSet
-	err = c.Watch(&source.Kind{Type: &corev1.Pod{}}, &podEventHandler{Reader: mgr.GetCache(), expectations: dsc.expectations})
+	err = c.Watch(source.Kind(mgr.GetCache(), &corev1.Pod{}, &podEventHandler{Reader: mgr.GetCache(), expectations: dsc.expectations}))
 	if err != nil {
 		return err
 	}
 
 	// TODO: Do we need to watch ControllerRevision?
 
-	klog.V(4).Info("finished to add daemonset-controller")
+	klog.V(4).InfoS("Finished to add daemonset-controller")
 	return nil
 }
 
@@ -312,18 +313,18 @@ func (dsc *ReconcileDaemonSet) Reconcile(ctx context.Context, request reconcile.
 	defer func() {
 		if retErr == nil {
 			if res.Requeue || res.RequeueAfter > 0 {
-				klog.Infof("Finished syncing DaemonSet %s, cost %v, result: %v", request, time.Since(startTime), res)
+				klog.InfoS("Finished syncing DaemonSet", "daemonSet", request, "cost", time.Since(startTime), "result", res)
 			} else {
-				klog.Infof("Finished syncing DaemonSet %s, cost %v", request, time.Since(startTime))
+				klog.InfoS("Finished syncing DaemonSet", "daemonSet", request, "cost", time.Since(startTime))
 			}
 		} else {
-			klog.Errorf("Failed syncing DaemonSet %s: %v", request, retErr)
+			klog.ErrorS(retErr, "Failed syncing DaemonSet", "daemonSet", request)
 		}
 		// clean the duration store
 		_ = durationStore.Pop(request.String())
 	}()
 
-	err := dsc.syncDaemonSet(request)
+	err := dsc.syncDaemonSet(ctx, request)
 	return reconcile.Result{RequeueAfter: durationStore.Pop(request.String())}, err
 }
 
@@ -331,7 +332,7 @@ func (dsc *ReconcileDaemonSet) Reconcile(ctx context.Context, request reconcile.
 // This also reconciles ControllerRef by adopting/orphaning.
 // Note that returned Pods are pointers to objects in the cache.
 // If you want to modify one, you need to deep-copy it first.
-func (dsc *ReconcileDaemonSet) getDaemonPods(ds *appsv1alpha1.DaemonSet) ([]*corev1.Pod, error) {
+func (dsc *ReconcileDaemonSet) getDaemonPods(ctx context.Context, ds *appsv1alpha1.DaemonSet) ([]*corev1.Pod, error) {
 	selector, err := kruiseutil.ValidatedLabelSelectorAsSelector(ds.Spec.Selector)
 	if err != nil {
 		return nil, err
@@ -346,8 +347,8 @@ func (dsc *ReconcileDaemonSet) getDaemonPods(ds *appsv1alpha1.DaemonSet) ([]*cor
 
 	// If any adoptions are attempted, we should first recheck for deletion with
 	// an uncached quorum read sometime after listing Pods (see #42639).
-	dsNotDeleted := kubecontroller.RecheckDeletionTimestamp(func() (metav1.Object, error) {
-		fresh, err := dsc.kruiseClient.AppsV1alpha1().DaemonSets(ds.Namespace).Get(context.TODO(), ds.Name, metav1.GetOptions{})
+	dsNotDeleted := kubecontroller.RecheckDeletionTimestamp(func(ctx context.Context) (metav1.Object, error) {
+		fresh, err := dsc.kruiseClient.AppsV1alpha1().DaemonSets(ds.Namespace).Get(ctx, ds.Name, metav1.GetOptions{})
 		if err != nil {
 			return nil, err
 		}
@@ -359,16 +360,17 @@ func (dsc *ReconcileDaemonSet) getDaemonPods(ds *appsv1alpha1.DaemonSet) ([]*cor
 
 	// Use ControllerRefManager to adopt/orphan as needed.
 	cm := kubecontroller.NewPodControllerRefManager(dsc.podControl, ds, selector, controllerKind, dsNotDeleted)
-	return cm.ClaimPods(pods)
+	return cm.ClaimPods(ctx, pods)
 }
 
-func (dsc *ReconcileDaemonSet) syncDaemonSet(request reconcile.Request) error {
+func (dsc *ReconcileDaemonSet) syncDaemonSet(ctx context.Context, request reconcile.Request) error {
+	logger := klog.FromContext(ctx)
 	dsKey := request.NamespacedName.String()
 	ds, err := dsc.dsLister.DaemonSets(request.Namespace).Get(request.Name)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			klog.V(4).Infof("DaemonSet has been deleted %s", dsKey)
-			dsc.expectations.DeleteExpectations(dsKey)
+			klog.V(4).InfoS("DaemonSet has been deleted", "daemonSet", request)
+			dsc.expectations.DeleteExpectations(logger, dsKey)
 			return nil
 		}
 		return fmt.Errorf("unable to retrieve DaemonSet %s from store: %v", dsKey, err)
@@ -393,14 +395,14 @@ func (dsc *ReconcileDaemonSet) syncDaemonSet(request reconcile.Request) error {
 	}
 
 	// Construct histories of the DaemonSet, and get the hash of current history
-	cur, old, err := dsc.constructHistory(ds)
+	cur, old, err := dsc.constructHistory(ctx, ds)
 	if err != nil {
 		return fmt.Errorf("failed to construct revisions of DaemonSet: %v", err)
 	}
 	hash := cur.Labels[apps.DefaultDaemonSetUniqueLabelKey]
 
-	if !dsc.expectations.SatisfiedExpectations(dsKey) || !dsc.hasPodExpectationsSatisfied(ds) {
-		return dsc.updateDaemonSetStatus(ds, nodeList, hash, false)
+	if !dsc.expectations.SatisfiedExpectations(logger, dsKey) || !dsc.hasPodExpectationsSatisfied(ctx, ds) {
+		return dsc.updateDaemonSetStatus(ctx, ds, nodeList, hash, false)
 	}
 
 	if !isPreDownloadDisabled && dsc.Client != nil {
@@ -412,34 +414,34 @@ func (dsc *ReconcileDaemonSet) syncDaemonSet(request reconcile.Request) error {
 				minUpdatedReadyPodsIntStr := intstrutil.Parse(minUpdatedReadyPods)
 				minUpdatedReadyPodsCount, err = intstrutil.GetScaledValueFromIntOrPercent(&minUpdatedReadyPodsIntStr, int(ds.Status.DesiredNumberScheduled), true)
 				if err != nil {
-					klog.Errorf("Failed to GetScaledValueFromIntOrPercent of minUpdatedReadyPods for %s: %v", request, err)
+					klog.ErrorS(err, "Failed to GetScaledValueFromIntOrPercent of minUpdatedReadyPods for DaemonSet", "daemonSet", request)
 				}
 			}
 			// todo: check whether the updatedReadyPodsCount greater than minUpdatedReadyPodsCount
 			_ = minUpdatedReadyPodsCount
 			// pre-download images for new revision
 			if err := dsc.createImagePullJobsForInPlaceUpdate(ds, old, cur); err != nil {
-				klog.Errorf("Failed to create ImagePullJobs for %s: %v", request, err)
+				klog.ErrorS(err, "Failed to create ImagePullJobs for DaemonSet", "daemonSet", request)
 			}
 		} else {
 			// delete ImagePullJobs if revisions have been consistent
 			if err := imagejobutilfunc.DeleteJobsForWorkload(dsc.Client, ds); err != nil {
-				klog.Errorf("Failed to delete imagepulljobs for %s: %v", request, err)
+				klog.ErrorS(err, "Failed to delete ImagePullJobs for DaemonSet", "daemonSet", request)
 			}
 		}
 	}
 
-	err = dsc.manage(ds, nodeList, hash)
+	err = dsc.manage(ctx, ds, nodeList, hash)
 	if err != nil {
 		return err
 	}
 
 	// return and wait next reconcile if expectation changed to unsatisfied
-	if !dsc.expectations.SatisfiedExpectations(dsKey) || !dsc.hasPodExpectationsSatisfied(ds) {
-		return dsc.updateDaemonSetStatus(ds, nodeList, hash, false)
+	if !dsc.expectations.SatisfiedExpectations(logger, dsKey) || !dsc.hasPodExpectationsSatisfied(ctx, ds) {
+		return dsc.updateDaemonSetStatus(ctx, ds, nodeList, hash, false)
 	}
 
-	if err := dsc.refreshUpdateStates(ds); err != nil {
+	if err := dsc.refreshUpdateStates(ctx, ds); err != nil {
 		return err
 	}
 
@@ -449,19 +451,19 @@ func (dsc *ReconcileDaemonSet) syncDaemonSet(request reconcile.Request) error {
 		switch ds.Spec.UpdateStrategy.Type {
 		case appsv1alpha1.OnDeleteDaemonSetStrategyType:
 		case appsv1alpha1.RollingUpdateDaemonSetStrategyType:
-			err = dsc.rollingUpdate(ds, nodeList, cur, old)
+			err = dsc.rollingUpdate(ctx, ds, nodeList, cur, old)
 			if err != nil {
 				return err
 			}
 		}
 	}
 
-	err = dsc.cleanupHistory(ds, old)
+	err = dsc.cleanupHistory(ctx, ds, old)
 	if err != nil {
 		return fmt.Errorf("failed to clean up revisions of DaemonSet: %v", err)
 	}
 
-	return dsc.updateDaemonSetStatus(ds, nodeList, hash, true)
+	return dsc.updateDaemonSetStatus(ctx, ds, nodeList, hash, true)
 }
 
 // Predicates checks if a DaemonSet's pod can run on a node.
@@ -512,8 +514,8 @@ func NewPod(ds *appsv1alpha1.DaemonSet, nodeName string) *corev1.Pod {
 	return newPod
 }
 
-func (dsc *ReconcileDaemonSet) updateDaemonSetStatus(ds *appsv1alpha1.DaemonSet, nodeList []*corev1.Node, hash string, updateObservedGen bool) error {
-	nodeToDaemonPods, err := dsc.getNodesToDaemonPods(ds)
+func (dsc *ReconcileDaemonSet) updateDaemonSetStatus(ctx context.Context, ds *appsv1alpha1.DaemonSet, nodeList []*corev1.Node, hash string, updateObservedGen bool) error {
+	nodeToDaemonPods, err := dsc.getNodesToDaemonPods(ctx, ds)
 	if err != nil {
 		return fmt.Errorf("couldn't get node to daemon pod mapping for DaemonSet %q: %v", ds.Name, err)
 	}
@@ -556,7 +558,7 @@ func (dsc *ReconcileDaemonSet) updateDaemonSetStatus(ds *appsv1alpha1.DaemonSet,
 	}
 	numberUnavailable := desiredNumberScheduled - numberAvailable
 
-	err = dsc.storeDaemonSetStatus(ds, desiredNumberScheduled, currentNumberScheduled, numberMisscheduled, numberReady, updatedNumberScheduled, numberAvailable, numberUnavailable, updateObservedGen, hash)
+	err = dsc.storeDaemonSetStatus(ctx, ds, desiredNumberScheduled, currentNumberScheduled, numberMisscheduled, numberReady, updatedNumberScheduled, numberAvailable, numberUnavailable, updateObservedGen, hash)
 	if err != nil {
 		return fmt.Errorf("error storing status for DaemonSet %v: %v", ds.Name, err)
 	}
@@ -568,7 +570,18 @@ func (dsc *ReconcileDaemonSet) updateDaemonSetStatus(ds *appsv1alpha1.DaemonSet,
 	return nil
 }
 
-func (dsc *ReconcileDaemonSet) storeDaemonSetStatus(ds *appsv1alpha1.DaemonSet, desiredNumberScheduled, currentNumberScheduled, numberMisscheduled, numberReady, updatedNumberScheduled, numberAvailable, numberUnavailable int, updateObservedGen bool, hash string) error {
+func (dsc *ReconcileDaemonSet) storeDaemonSetStatus(
+	ctx context.Context,
+	ds *appsv1alpha1.DaemonSet,
+	desiredNumberScheduled,
+	currentNumberScheduled,
+	numberMisscheduled,
+	numberReady,
+	updatedNumberScheduled,
+	numberAvailable,
+	numberUnavailable int,
+	updateObservedGen bool,
+	hash string) error {
 	if int(ds.Status.DesiredNumberScheduled) == desiredNumberScheduled &&
 		int(ds.Status.CurrentNumberScheduled) == currentNumberScheduled &&
 		int(ds.Status.NumberMisscheduled) == numberMisscheduled &&
@@ -597,17 +610,17 @@ func (dsc *ReconcileDaemonSet) storeDaemonSetStatus(ds *appsv1alpha1.DaemonSet, 
 		toUpdate.Status.NumberUnavailable = int32(numberUnavailable)
 		toUpdate.Status.DaemonSetHash = hash
 
-		if _, updateErr = dsClient.UpdateStatus(context.TODO(), toUpdate, metav1.UpdateOptions{}); updateErr == nil {
-			klog.Infof("Updated DaemonSet %s/%s status to %v", ds.Namespace, ds.Name, kruiseutil.DumpJSON(toUpdate.Status))
+		if _, updateErr = dsClient.UpdateStatus(ctx, toUpdate, metav1.UpdateOptions{}); updateErr == nil {
+			klog.InfoS("Updated DaemonSet status", "daemonSet", klog.KObj(ds), "status", kruiseutil.DumpJSON(toUpdate.Status))
 			return nil
 		}
 
-		klog.Errorf("Update DaemonSet status %v failed: %v", ds.Status, updateErr)
+		klog.ErrorS(updateErr, "Failed to Update DaemonSet status", "daemonSet", klog.KObj(ds), "status", ds.Status)
 		// Update the set with the latest resource version for the next poll
-		if toUpdate, getErr = dsClient.Get(context.TODO(), ds.Name, metav1.GetOptions{}); getErr != nil {
+		if toUpdate, getErr = dsClient.Get(ctx, ds.Name, metav1.GetOptions{}); getErr != nil {
 			// If the GET fails we can't trust status.Replicas anymore. This error
 			// is bound to be more interesting than the update failure.
-			klog.Errorf("Get DaemonSet %v for status update failed: %v", ds.Name, getErr)
+			klog.ErrorS(getErr, "Failed to get DaemonSet for status update", "daemonSet", klog.KObj(ds))
 			return getErr
 		}
 		return updateErr
@@ -618,9 +631,9 @@ func (dsc *ReconcileDaemonSet) storeDaemonSetStatus(ds *appsv1alpha1.DaemonSet, 
 // After figuring out which nodes should run a Pod of ds but not yet running one and
 // which nodes should not run a Pod of ds but currently running one, it calls function
 // syncNodes with a list of pods to remove and a list of nodes to run a Pod of ds.
-func (dsc *ReconcileDaemonSet) manage(ds *appsv1alpha1.DaemonSet, nodeList []*corev1.Node, hash string) error {
+func (dsc *ReconcileDaemonSet) manage(ctx context.Context, ds *appsv1alpha1.DaemonSet, nodeList []*corev1.Node, hash string) error {
 	// Find out the pods which are created for the nodes by DaemonSets.
-	nodeToDaemonPods, err := dsc.getNodesToDaemonPods(ds)
+	nodeToDaemonPods, err := dsc.getNodesToDaemonPods(ctx, ds)
 	if err != nil {
 		return fmt.Errorf("couldn't get node to daemon pod mapping for DaemonSet %s: %v", ds.Name, err)
 	}
@@ -660,12 +673,12 @@ func (dsc *ReconcileDaemonSet) manage(ds *appsv1alpha1.DaemonSet, nodeList []*co
 	}
 
 	// Label new pods using the hash label value of the current history when creating them
-	return dsc.syncNodes(ds, podsToDelete, nodesNeedingDaemonPods, hash)
+	return dsc.syncNodes(ctx, ds, podsToDelete, nodesNeedingDaemonPods, hash)
 }
 
 // syncNodes deletes given pods and creates new daemon set pods on the given nodes
 // returns slice with errors if any
-func (dsc *ReconcileDaemonSet) syncNodes(ds *appsv1alpha1.DaemonSet, podsToDelete, nodesNeedingDaemonPods []string, hash string) error {
+func (dsc *ReconcileDaemonSet) syncNodes(ctx context.Context, ds *appsv1alpha1.DaemonSet, podsToDelete, nodesNeedingDaemonPods []string, hash string) error {
 	if ds.Spec.Lifecycle != nil && ds.Spec.Lifecycle.PreDelete != nil {
 		var err error
 		podsToDelete, err = dsc.syncWithPreparingDelete(ds, podsToDelete)
@@ -674,6 +687,7 @@ func (dsc *ReconcileDaemonSet) syncNodes(ds *appsv1alpha1.DaemonSet, podsToDelet
 		}
 	}
 
+	logger := klog.FromContext(ctx)
 	dsKey := keyFunc(ds)
 	createDiff := len(nodesNeedingDaemonPods)
 	deleteDiff := len(podsToDelete)
@@ -686,13 +700,13 @@ func (dsc *ReconcileDaemonSet) syncNodes(ds *appsv1alpha1.DaemonSet, podsToDelet
 		deleteDiff = burstReplicas
 	}
 
-	if err := dsc.expectations.SetExpectations(dsKey, createDiff, deleteDiff); err != nil {
+	if err := dsc.expectations.SetExpectations(logger, dsKey, createDiff, deleteDiff); err != nil {
 		utilruntime.HandleError(err)
 	}
 	// error channel to communicate back failures.  make the buffer big enough to avoid any blocking
 	errCh := make(chan error, createDiff+deleteDiff)
 
-	klog.V(4).Infof("Nodes needing daemon pods for DaemonSet %s: %+v, creating %d", ds.Name, nodesNeedingDaemonPods, createDiff)
+	klog.V(4).InfoS("Nodes needing daemon pods for DaemonSet", "daemonSet", klog.KObj(ds), "nodes", nodesNeedingDaemonPods, "count", createDiff)
 	createWait := sync.WaitGroup{}
 	// If the returned error is not nil we have a parse error.
 	// The controller handles this via the hash.
@@ -741,7 +755,7 @@ func (dsc *ReconcileDaemonSet) syncNodes(ds *appsv1alpha1.DaemonSet, podsToDelet
 					podTemplate.Spec.NodeName = nodesNeedingDaemonPods[ix]
 				}
 
-				err = dsc.podControl.CreatePods(ds.Namespace, podTemplate, ds, metav1.NewControllerRef(ds, controllerKind))
+				err = dsc.podControl.CreatePods(ctx, ds.Namespace, podTemplate, ds, metav1.NewControllerRef(ds, controllerKind))
 
 				if err != nil {
 					if errors.HasStatusCause(err, corev1.NamespaceTerminatingCause) {
@@ -751,8 +765,8 @@ func (dsc *ReconcileDaemonSet) syncNodes(ds *appsv1alpha1.DaemonSet, podsToDelet
 					}
 				}
 				if err != nil {
-					klog.V(2).Infof("Failed creation, decrementing expectations for set %q/%q", ds.Namespace, ds.Name)
-					dsc.expectations.CreationObserved(dsKey)
+					klog.V(2).InfoS("Failed creation, decrementing expectations for DaemonSet", "daemonSet", klog.KObj(ds))
+					dsc.expectations.CreationObserved(logger, dsKey)
 					errCh <- err
 					utilruntime.HandleError(err)
 				}
@@ -762,24 +776,24 @@ func (dsc *ReconcileDaemonSet) syncNodes(ds *appsv1alpha1.DaemonSet, podsToDelet
 		// any skipped pods that we never attempted to start shouldn't be expected.
 		skippedPods := createDiff - (batchSize + pos)
 		if errorCount < len(errCh) && skippedPods > 0 {
-			klog.V(2).Infof("Slow-start failure. Skipping creation of %d pods, decrementing expectations for set %q/%q", skippedPods, ds.Namespace, ds.Name)
-			dsc.expectations.LowerExpectations(dsKey, skippedPods, 0)
+			klog.V(2).InfoS("Slow-start failure. Skipping creation of pods, decrementing expectations for DaemonSet", "skippedPodCount", skippedPods, "daemonSet", klog.KObj(ds))
+			dsc.expectations.LowerExpectations(logger, dsKey, skippedPods, 0)
 			// The skipped pods will be retried later. The next controller resync will
 			// retry the slow start process.
 			break
 		}
 	}
 
-	klog.V(4).Infof("Pods to delete for DaemonSet %s: %+v, deleting %d", ds.Name, podsToDelete, deleteDiff)
+	klog.V(4).InfoS("Pods to delete for DaemonSet", "daemonSet", klog.KObj(ds), "podsToDelete", podsToDelete, "count", deleteDiff)
 	deleteWait := sync.WaitGroup{}
 	deleteWait.Add(deleteDiff)
 	for i := 0; i < deleteDiff; i++ {
 		go func(ix int) {
 			defer deleteWait.Done()
-			if err := dsc.podControl.DeletePod(ds.Namespace, podsToDelete[ix], ds); err != nil {
-				dsc.expectations.DeletionObserved(dsKey)
+			if err := dsc.podControl.DeletePod(ctx, ds.Namespace, podsToDelete[ix], ds); err != nil {
+				dsc.expectations.DeletionObserved(logger, dsKey)
 				if !errors.IsNotFound(err) {
-					klog.V(2).Infof("Failed deletion, decremented expectations for set %q/%q", ds.Namespace, ds.Name)
+					klog.V(2).InfoS("Failed deletion, decremented expectations for DaemonSet", "daemonSet", klog.KObj(ds))
 					errCh <- err
 					utilruntime.HandleError(err)
 				}
@@ -813,7 +827,7 @@ func (dsc *ReconcileDaemonSet) syncWithPreparingDelete(ds *appsv1alpha1.DaemonSe
 		if updated, gotPod, err := dsc.lifecycleControl.UpdatePodLifecycle(pod, appspub.LifecycleStatePreparingDelete, markPodNotReady); err != nil {
 			return nil, err
 		} else if updated {
-			klog.V(3).Infof("DaemonSet %s/%s has marked Pod %s as PreparingDelete", ds.Namespace, ds.Name, podName)
+			klog.V(3).InfoS("DaemonSet has marked Pod as PreparingDelete", "daemonSet", klog.KObj(ds), "podName", podName)
 			dsc.resourceVersionExpectations.Expect(gotPod)
 		}
 	}
@@ -855,21 +869,21 @@ func (dsc *ReconcileDaemonSet) podsShouldBeOnNode(
 				inBackoff := dsc.failedPodsBackoff.IsInBackOffSinceUpdate(backoffKey, now)
 				if inBackoff {
 					delay := dsc.failedPodsBackoff.Get(backoffKey)
-					klog.V(4).Infof("Deleting failed pod %s/%s on node %s has been limited by backoff - %v remaining",
-						pod.Namespace, pod.Name, node.Name, delay)
+					klog.V(4).InfoS("Deleting failed pod on node has been limited by backoff",
+						"pod", klog.KObj(pod), "nodeName", node.Name, "backoffDelay", delay)
 					durationStore.Push(keyFunc(ds), delay)
 					continue
 				}
 
 				dsc.failedPodsBackoff.Next(backoffKey, now)
 
-				msg := fmt.Sprintf("Found failed daemon pod %s/%s on node %s, will try to kill it", pod.Namespace, pod.Name, node.Name)
-				klog.V(2).Infof(msg)
+				klog.V(2).InfoS("Found failed daemon pod on node, will try to kill it", "pod", klog.KObj(pod), "nodeName", node.Name)
 				// Emit an event so that it's discoverable to users.
-				dsc.eventRecorder.Eventf(ds, corev1.EventTypeWarning, FailedDaemonPodReason, msg)
+				dsc.eventRecorder.Eventf(ds, corev1.EventTypeWarning, FailedDaemonPodReason,
+					fmt.Sprintf("Found failed daemon pod %s/%s on node %s, will try to kill it", pod.Namespace, pod.Name, node.Name))
 				podsToDelete = append(podsToDelete, pod.Name)
 			} else if isPodPreDeleting(pod) {
-				klog.V(3).Infof("Found daemon pod %s/%s on node %s is in PreparingDelete state, will try to kill it", pod.Namespace, pod.Name, node.Name)
+				klog.V(3).InfoS("Found daemon pod on node is in PreparingDelete state, will try to kill it", "pod", klog.KObj(pod), "nodeName", node.Name)
 				podsToDelete = append(podsToDelete, pod.Name)
 			} else {
 				daemonPodsRunning = append(daemonPodsRunning, pod)
@@ -921,10 +935,12 @@ func (dsc *ReconcileDaemonSet) podsShouldBeOnNode(
 		if oldestNewPod != nil && oldestOldPod != nil {
 			switch {
 			case !podutil.IsPodReady(oldestOldPod):
-				klog.V(5).Infof("Pod %s/%s from daemonset %s is no longer ready and will be replaced with newer pod %s", oldestOldPod.Namespace, oldestOldPod.Name, ds.Name, oldestNewPod.Name)
+				klog.V(5).InfoS("Pod from DaemonSet is no longer ready and will be replaced with newer pod",
+					"daemonSet", klog.KObj(ds), "oldestOldPod", klog.KObj(oldestOldPod), "oldestNewPod", klog.KObj(oldestNewPod))
 				podsToDelete = append(podsToDelete, oldestOldPod.Name)
 			case podutil.IsPodAvailable(oldestNewPod, ds.Spec.MinReadySeconds, metav1.Time{Time: dsc.failedPodsBackoff.Clock.Now()}):
-				klog.V(5).Infof("Pod %s/%s from daemonset %s is now ready and will replace older pod %s", oldestNewPod.Namespace, oldestNewPod.Name, ds.Name, oldestOldPod.Name)
+				klog.V(5).InfoS("Pod from DaemonSet is now ready and will replace older pod",
+					"daemonSet", klog.KObj(ds), "oldestOldPod", klog.KObj(oldestOldPod), "oldestNewPod", klog.KObj(oldestNewPod))
 				podsToDelete = append(podsToDelete, oldestOldPod.Name)
 			case podutil.IsPodReady(oldestNewPod) && ds.Spec.MinReadySeconds > 0:
 				durationStore.Push(keyFunc(ds), podAvailableWaitingTime(oldestNewPod, ds.Spec.MinReadySeconds, dsc.failedPodsBackoff.Clock.Now()))
@@ -937,7 +953,7 @@ func (dsc *ReconcileDaemonSet) podsShouldBeOnNode(
 			if pod.DeletionTimestamp != nil {
 				continue
 			}
-			klog.V(5).Infof("If daemon pod isn't supposed to run on node %s, but it is, delete daemon pod %s/%s on node.", node.Name, pod.Namespace, pod.Name)
+			klog.V(5).InfoS("If daemon pod isn't supposed to run on node, but it is, delete daemon pod on node.", "nodeName", node.Name, "pod", klog.KObj(pod))
 			podsToDelete = append(podsToDelete, pod.Name)
 		}
 	}
@@ -949,8 +965,8 @@ func (dsc *ReconcileDaemonSet) podsShouldBeOnNode(
 // This also reconciles ControllerRef by adopting/orphaning.
 // Note that returned Pods are pointers to objects in the cache.
 // If you want to modify one, you need to deep-copy it first.
-func (dsc *ReconcileDaemonSet) getNodesToDaemonPods(ds *appsv1alpha1.DaemonSet) (map[string][]*corev1.Pod, error) {
-	claimedPods, err := dsc.getDaemonPods(ds)
+func (dsc *ReconcileDaemonSet) getNodesToDaemonPods(ctx context.Context, ds *appsv1alpha1.DaemonSet) (map[string][]*corev1.Pod, error) {
+	claimedPods, err := dsc.getDaemonPods(ctx, ds)
 	if err != nil {
 		return nil, err
 	}
@@ -959,7 +975,7 @@ func (dsc *ReconcileDaemonSet) getNodesToDaemonPods(ds *appsv1alpha1.DaemonSet) 
 	for _, pod := range claimedPods {
 		nodeName, err := util.GetTargetNodeName(pod)
 		if err != nil {
-			klog.Warningf("Failed to get target node name of Pod %v/%v in DaemonSet %v/%v", pod.Namespace, pod.Name, ds.Namespace, ds.Name)
+			klog.InfoS("Failed to get target node name of Pod in DaemonSet", "pod", klog.KObj(pod), "daemonSet", klog.KObj(ds))
 			continue
 		}
 		nodeToDaemonPods[nodeName] = append(nodeToDaemonPods[nodeName], pod)
@@ -993,8 +1009,8 @@ func (o podByCreationTimestampAndPhase) Less(i, j int) bool {
 	return o[i].CreationTimestamp.Before(&o[j].CreationTimestamp)
 }
 
-func (dsc *ReconcileDaemonSet) cleanupHistory(ds *appsv1alpha1.DaemonSet, old []*apps.ControllerRevision) error {
-	nodesToDaemonPods, err := dsc.getNodesToDaemonPods(ds)
+func (dsc *ReconcileDaemonSet) cleanupHistory(ctx context.Context, ds *appsv1alpha1.DaemonSet, old []*apps.ControllerRevision) error {
+	nodesToDaemonPods, err := dsc.getNodesToDaemonPods(ctx, ds)
 	if err != nil {
 		return fmt.Errorf("couldn't get node to daemon pod mapping for DaemonSet %q: %v", ds.Name, err)
 	}
@@ -1028,7 +1044,7 @@ func (dsc *ReconcileDaemonSet) cleanupHistory(ds *appsv1alpha1.DaemonSet, old []
 			continue
 		}
 		// Clean up
-		err := dsc.kubeClient.AppsV1().ControllerRevisions(ds.Namespace).Delete(context.TODO(), history.Name, metav1.DeleteOptions{})
+		err := dsc.kubeClient.AppsV1().ControllerRevisions(ds.Namespace).Delete(ctx, history.Name, metav1.DeleteOptions{})
 		if err != nil {
 			return err
 		}
@@ -1037,9 +1053,9 @@ func (dsc *ReconcileDaemonSet) cleanupHistory(ds *appsv1alpha1.DaemonSet, old []
 	return nil
 }
 
-func (dsc *ReconcileDaemonSet) refreshUpdateStates(ds *appsv1alpha1.DaemonSet) error {
+func (dsc *ReconcileDaemonSet) refreshUpdateStates(ctx context.Context, ds *appsv1alpha1.DaemonSet) error {
 	dsKey := keyFunc(ds)
-	pods, err := dsc.getDaemonPods(ds)
+	pods, err := dsc.getDaemonPods(ctx, ds)
 	if err != nil {
 		return err
 	}
@@ -1052,7 +1068,7 @@ func (dsc *ReconcileDaemonSet) refreshUpdateStates(ds *appsv1alpha1.DaemonSet) e
 		}
 		res := dsc.inplaceControl.Refresh(pod, opts)
 		if res.RefreshErr != nil {
-			klog.Errorf("DaemonSet %s/%s failed to update pod %s condition for inplace: %v", ds.Namespace, ds.Name, pod.Name, res.RefreshErr)
+			klog.ErrorS(res.RefreshErr, "DaemonSet failed to update pod condition for inplace", "daemonSet", klog.KObj(ds), "pod", klog.KObj(pod))
 			return res.RefreshErr
 		}
 		if res.DelayDuration != 0 {
@@ -1063,11 +1079,11 @@ func (dsc *ReconcileDaemonSet) refreshUpdateStates(ds *appsv1alpha1.DaemonSet) e
 	return nil
 }
 
-func (dsc *ReconcileDaemonSet) hasPodExpectationsSatisfied(ds *appsv1alpha1.DaemonSet) bool {
+func (dsc *ReconcileDaemonSet) hasPodExpectationsSatisfied(ctx context.Context, ds *appsv1alpha1.DaemonSet) bool {
 	dsKey := keyFunc(ds)
-	pods, err := dsc.getDaemonPods(ds)
+	pods, err := dsc.getDaemonPods(ctx, ds)
 	if err != nil {
-		klog.Errorf("Failed to get pods for DaemonSet")
+		klog.ErrorS(err, "Failed to get pods for DaemonSet")
 		return false
 	}
 
@@ -1075,9 +1091,10 @@ func (dsc *ReconcileDaemonSet) hasPodExpectationsSatisfied(ds *appsv1alpha1.Daem
 		dsc.resourceVersionExpectations.Observe(pod)
 		if isSatisfied, unsatisfiedDuration := dsc.resourceVersionExpectations.IsSatisfied(pod); !isSatisfied {
 			if unsatisfiedDuration >= kruiseExpectations.ExpectationTimeout {
-				klog.Errorf("Expectation unsatisfied resourceVersion overtime for %v, wait for pod %v updating, timeout=%v", dsKey, pod.Name, unsatisfiedDuration)
+				klog.ErrorS(nil, "Expectation unsatisfied resourceVersion overtime for DaemonSet, wait for pod updating",
+					"daemonSet", klog.KObj(ds), "pod", klog.KObj(pod), "timeout", unsatisfiedDuration)
 			} else {
-				klog.V(5).Infof("Not satisfied resourceVersion for %v, wait for pod %v updating", dsKey, pod.Name)
+				klog.V(5).InfoS("Not satisfied resourceVersion for DaemonSet, wait for pod updating", "daemonSet", klog.KObj(ds), "pod", klog.KObj(pod))
 				durationStore.Push(dsKey, kruiseExpectations.ExpectationTimeout-unsatisfiedDuration)
 			}
 			return false
