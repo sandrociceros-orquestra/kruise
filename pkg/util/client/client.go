@@ -21,7 +21,6 @@ import (
 
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
@@ -29,6 +28,11 @@ func NewClientFromManager(mgr manager.Manager, name string) client.Client {
 	cfg := rest.CopyConfig(mgr.GetConfig())
 	cfg.UserAgent = fmt.Sprintf("kruise-manager/%s", name)
 
-	delegatingClient, _ := cluster.DefaultNewClient(mgr.GetCache(), cfg, client.Options{Scheme: mgr.GetScheme(), Mapper: mgr.GetRESTMapper()})
+	delegatingClient, _ := client.New(cfg, client.Options{
+		Cache: &client.CacheOptions{
+			Reader:       mgr.GetCache(),
+			Unstructured: true,
+		},
+	})
 	return delegatingClient
 }

@@ -22,14 +22,14 @@ import (
 	"net/http"
 	"reflect"
 
-	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
-	"github.com/openkruise/kruise/pkg/util/configuration"
 	admissionv1 "k8s.io/api/admission/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/runtime/inject"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+
+	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
+	"github.com/openkruise/kruise/pkg/util/configuration"
 )
 
 // PersistentPodStateCreateUpdateHandler handles PersistentPodState
@@ -41,7 +41,7 @@ type PersistentPodStateCreateUpdateHandler struct {
 	Client client.Client
 
 	// Decoder decodes objects
-	Decoder *admission.Decoder
+	Decoder admission.Decoder
 }
 
 var _ admission.Handler = &PersistentPodStateCreateUpdateHandler{}
@@ -73,7 +73,7 @@ func (h *PersistentPodStateCreateUpdateHandler) Handle(ctx context.Context, req 
 func (h *PersistentPodStateCreateUpdateHandler) validatingPersistentPodStateFn(obj, old *appsv1alpha1.PersistentPodState) field.ErrorList {
 	//validate pps.Spec
 	allErrs := field.ErrorList{}
-	whiteList, err := configuration.GetPPSWatchWatchCustomWorkloadWhiteList(h.Client)
+	whiteList, err := configuration.GetPPSWatchCustomWorkloadWhiteList(h.Client)
 	if err != nil {
 		allErrs = append(allErrs, field.InternalError(field.NewPath(""), fmt.Errorf("failed to get persistent pod state config white list, error: %v", err)))
 		return allErrs
@@ -105,7 +105,7 @@ func validateUpdateObjImmutable(obj, old *appsv1alpha1.PersistentPodState, fldPa
 	return allErrs
 }
 
-func validatePersistentPodStateSpec(obj *appsv1alpha1.PersistentPodState, fldPath *field.Path, whiteList *configuration.PPSWatchWatchCustomWorkloadWhiteList) field.ErrorList {
+func validatePersistentPodStateSpec(obj *appsv1alpha1.PersistentPodState, fldPath *field.Path, whiteList *configuration.CustomWorkloadWhiteList) field.ErrorList {
 	spec := &obj.Spec
 	allErrs := field.ErrorList{}
 	// targetRef
@@ -145,20 +145,4 @@ func validatePerConflict(pps *appsv1alpha1.PersistentPodState, others []appsv1al
 		}
 	}
 	return allErrs
-}
-
-var _ inject.Client = &PersistentPodStateCreateUpdateHandler{}
-
-// InjectClient injects the client into the PersistentPodStateCreateUpdateHandler
-func (h *PersistentPodStateCreateUpdateHandler) InjectClient(c client.Client) error {
-	h.Client = c
-	return nil
-}
-
-var _ admission.DecoderInjector = &PersistentPodStateCreateUpdateHandler{}
-
-// InjectDecoder injects the decoder into the PersistentPodStateCreateUpdateHandler
-func (h *PersistentPodStateCreateUpdateHandler) InjectDecoder(d *admission.Decoder) error {
-	h.Decoder = d
-	return nil
 }

@@ -18,14 +18,18 @@ package util
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
-	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/klog/v2"
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
+
+	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
 )
 
 // GetPodNames returns names of the given Pods array
@@ -284,6 +288,9 @@ func ContainsObjectRef(slice []v1.ObjectReference, obj v1.ObjectReference) bool 
 }
 
 func GetCondition(pod *v1.Pod, cType v1.PodConditionType) *v1.PodCondition {
+	if pod == nil {
+		return nil
+	}
 	for _, c := range pod.Status.Conditions {
 		if c.Type == cType {
 			return &c
@@ -296,6 +303,18 @@ func SetPodCondition(pod *v1.Pod, condition v1.PodCondition) {
 	for i, c := range pod.Status.Conditions {
 		if c.Type == condition.Type {
 			if c.Status != condition.Status {
+				pod.Status.Conditions[i] = condition
+			}
+			return
+		}
+	}
+	pod.Status.Conditions = append(pod.Status.Conditions, condition)
+}
+
+func SetPodConditionIfMsgChanged(pod *v1.Pod, condition v1.PodCondition) {
+	for i, c := range pod.Status.Conditions {
+		if c.Type == condition.Type {
+			if c.Status != condition.Status || c.Message != condition.Message {
 				pod.Status.Conditions[i] = condition
 			}
 			return
@@ -342,4 +361,57 @@ func SetPodReadyCondition(pod *v1.Pod) {
 	}
 
 	SetPodCondition(pod, newPodReady)
+}
+
+func ExtractPort(param intstr.IntOrString, container v1.Container) (int, error) {
+	port := -1
+	var err error
+	switch param.Type {
+	case intstr.Int:
+		port = param.IntValue()
+	case intstr.String:
+		if port, err = findPortByName(container, param.StrVal); err != nil {
+			// Last ditch effort - maybe it was an int stored as string?
+			klog.ErrorS(err, "failed to find port by name")
+			if port, err = strconv.Atoi(param.StrVal); err != nil {
+				return port, err
+			}
+		}
+	default:
+		return port, fmt.Errorf("intOrString had no kind: %+v", param)
+	}
+	if port > 0 && port < 65536 {
+		return port, nil
+	}
+	return port, fmt.Errorf("invalid port number: %v", port)
+}
+
+// findPortByName is a helper function to look up a port in a container by name.
+func findPortByName(container v1.Container, portName string) (int, error) {
+	for _, port := range container.Ports {
+		if port.Name == portName {
+			return int(port.ContainerPort), nil
+		}
+	}
+	return 0, fmt.Errorf("port %s not found", portName)
+}
+
+func GetPodContainerByName(cName string, pod *v1.Pod) *v1.Container {
+	for _, container := range pod.Spec.Containers {
+		if cName == container.Name {
+			return &container
+		}
+	}
+
+	return nil
+}
+
+// IsRestartableInitContainer returns true if the initContainer has
+// ContainerRestartPolicyAlways.
+func IsRestartableInitContainer(initContainer *v1.Container) bool {
+	if initContainer.RestartPolicy == nil {
+		return false
+	}
+
+	return *initContainer.RestartPolicy == v1.ContainerRestartPolicyAlways
 }

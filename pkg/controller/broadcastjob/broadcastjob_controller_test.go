@@ -17,14 +17,15 @@ limitations under the License.
 package broadcastjob
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"reflect"
 	"testing"
 
-	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+
 	"github.com/stretchr/testify/assert"
-	"golang.org/x/net/context"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -38,6 +39,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
 )
 
 func init() {
@@ -90,8 +93,8 @@ func TestGetNodeToPodMap(t *testing.T) {
 // 1 new pod created on 1 node
 func TestReconcileJobCreatePodAbsolute(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = appsv1alpha1.AddToScheme(scheme)
-	_ = v1.AddToScheme(scheme)
+	utilruntime.Must(appsv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(v1.AddToScheme(scheme))
 
 	p := intstr.FromInt(2)
 	// A job
@@ -146,8 +149,8 @@ func TestReconcileJobCreatePodAbsolute(t *testing.T) {
 // 1 new pod created on 1 node
 func TestReconcileJobCreatePodPercentage(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = appsv1alpha1.AddToScheme(scheme)
-	_ = v1.AddToScheme(scheme)
+	utilruntime.Must(appsv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(v1.AddToScheme(scheme))
 
 	p := intstr.FromString("40%")
 	// A job
@@ -204,8 +207,8 @@ func TestReconcileJobCreatePodPercentage(t *testing.T) {
 // Check only 1 pod is created because the other node is unschedulable
 func TestPodsOnUnschedulableNodes(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = appsv1alpha1.AddToScheme(scheme)
-	_ = v1.AddToScheme(scheme)
+	utilruntime.Must(appsv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(v1.AddToScheme(scheme))
 
 	p := intstr.FromInt(2)
 	// A job
@@ -250,8 +253,8 @@ func TestPodsOnUnschedulableNodes(t *testing.T) {
 // 10 pods created with slow start
 func TestReconcileJobMultipleBatches(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = appsv1alpha1.AddToScheme(scheme)
-	_ = v1.AddToScheme(scheme)
+	utilruntime.Must(appsv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(v1.AddToScheme(scheme))
 
 	p := intstr.FromInt(20)
 	// A job
@@ -295,8 +298,8 @@ func TestReconcileJobMultipleBatches(t *testing.T) {
 // Check job state is failed
 func TestJobFailed(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = appsv1alpha1.AddToScheme(scheme)
-	_ = v1.AddToScheme(scheme)
+	utilruntime.Must(appsv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(v1.AddToScheme(scheme))
 
 	// A job
 	p := intstr.FromInt(10)
@@ -347,8 +350,8 @@ func TestJobFailed(t *testing.T) {
 // check job phase is running
 func TestJobFailurePolicyTypeContinue(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = appsv1alpha1.AddToScheme(scheme)
-	_ = v1.AddToScheme(scheme)
+	utilruntime.Must(appsv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(v1.AddToScheme(scheme))
 
 	// A job
 	p := intstr.FromInt(10)
@@ -394,8 +397,8 @@ func TestJobFailurePolicyTypeContinue(t *testing.T) {
 // check job phase is failed
 func TestJobFailurePolicyTypeFailFast(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = appsv1alpha1.AddToScheme(scheme)
-	_ = v1.AddToScheme(scheme)
+	utilruntime.Must(appsv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(v1.AddToScheme(scheme))
 
 	// A job
 	p := intstr.FromInt(10)
@@ -441,8 +444,8 @@ func TestJobFailurePolicyTypeFailFast(t *testing.T) {
 // check job phase is paused
 func TestJobFailurePolicyPause(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = appsv1alpha1.AddToScheme(scheme)
-	_ = v1.AddToScheme(scheme)
+	utilruntime.Must(appsv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(v1.AddToScheme(scheme))
 
 	// A job
 	p := intstr.FromInt(10)
@@ -489,8 +492,8 @@ func TestJobFailurePolicyPause(t *testing.T) {
 // check job phase is paused, and no new pod is created.
 func TestJobSetPaused(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = appsv1alpha1.AddToScheme(scheme)
-	_ = v1.AddToScheme(scheme)
+	utilruntime.Must(appsv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(v1.AddToScheme(scheme))
 
 	p := intstr.FromString("50%")
 	// A job
@@ -532,8 +535,8 @@ func TestJobSetPaused(t *testing.T) {
 // The job should fail after activeDeadline, and active pods will be deleted
 func TestJobFailedAfterActiveDeadline(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = appsv1alpha1.AddToScheme(scheme)
-	_ = v1.AddToScheme(scheme)
+	utilruntime.Must(appsv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(v1.AddToScheme(scheme))
 
 	// A job
 	p := intstr.FromInt(10)
@@ -541,6 +544,10 @@ func TestJobFailedAfterActiveDeadline(t *testing.T) {
 	activeDeadline := int64(0)
 	now := metav1.Now()
 	job := &appsv1alpha1.BroadcastJob{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "BroadcastJob",
+			APIVersion: "apps.kruise.io/v1alpha1",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "job10",
 			Namespace: "default",
@@ -599,7 +606,8 @@ func TestJobFailedAfterActiveDeadline(t *testing.T) {
 }
 
 func createReconcileJob(scheme *runtime.Scheme, initObjs ...client.Object) ReconcileBroadcastJob {
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(initObjs...).Build()
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(initObjs...).WithStatusSubresource(&appsv1alpha1.BroadcastJob{}).Build()
 	eventBroadcaster := record.NewBroadcaster()
 	recorder := eventBroadcaster.NewRecorder(scheme, v1.EventSource{Component: "broadcast-controller"})
 	reconcileJob := ReconcileBroadcastJob{
@@ -627,6 +635,10 @@ func createNode(nodeName string) *v1.Node {
 
 func createJob(jobName string, parallelism intstr.IntOrString) *appsv1alpha1.BroadcastJob {
 	job1 := &appsv1alpha1.BroadcastJob{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "BroadcastJob",
+			APIVersion: "apps.kruise.io/v1alpha1",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName,
 			Namespace: "default",

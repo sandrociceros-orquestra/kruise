@@ -56,7 +56,8 @@ func (c *commonControl) UpgradeSidecarContainer(sidecarContainer *appsv1alpha1.S
 	}
 	container := util.GetContainer(nameToUpgrade, pod)
 	container.Image = sidecarContainer.Image
-	klog.V(3).Infof("upgrade pod(%s/%s) container(%s) Image from(%s) -> to(%s)", pod.Namespace, pod.Name, nameToUpgrade, oldImage, container.Image)
+	klog.V(3).InfoS("Upgraded pod container image", "pod", klog.KObj(pod), "containerName", nameToUpgrade,
+		"oldImage", oldImage, "newImage", container.Image)
 	return container
 }
 
@@ -84,8 +85,8 @@ func (c *commonControl) IsPodReady(pod *v1.Pod) bool {
 	for _, container := range pod.Spec.Containers {
 		// If container is empty container, then its image must be empty image
 		if emptyImage := emptyContainers[container.Name]; emptyImage != "" && container.Image != emptyImage {
-			klog.V(5).Infof("pod(%s/%s) sidecar empty container(%s) Image(%s) isn't Empty Image(%s)",
-				pod.Namespace, pod.Name, container.Name, container.Image, emptyImage)
+			klog.V(5).InfoS("Pod sidecar empty container image wasn't empty image", "pod", klog.KObj(pod),
+				"containerName", container.Name, "containerImage", container.Image, "emptyImage", emptyImage)
 			return false
 		}
 	}
@@ -103,8 +104,8 @@ func (c *commonControl) UpdatePodAnnotationsInUpgrade(changedContainers []string
 	sidecarUpdateStates := make(map[string]*pub.InPlaceUpdateState)
 	if stateStr := pod.Annotations[SidecarsetInplaceUpdateStateKey]; len(stateStr) > 0 {
 		if err := json.Unmarshal([]byte(stateStr), &sidecarUpdateStates); err != nil {
-			klog.Errorf("parse pod(%s/%s) annotations[%s] value(%s) failed: %s",
-				pod.Namespace, pod.Name, SidecarsetInplaceUpdateStateKey, stateStr, err.Error())
+			klog.ErrorS(err, "Failed to parse pod annotations value", "pod", klog.KObj(pod),
+				"annotation", SidecarsetInplaceUpdateStateKey, "value", stateStr)
 		}
 	}
 	inPlaceUpdateState, ok := sidecarUpdateStates[sidecarSet.Name]
@@ -181,12 +182,12 @@ func (c *commonControl) IsPodStateConsistent(pod *v1.Pod, sidecarContainers sets
 	return IsSidecarContainerUpdateCompleted(pod, sets.NewString(sidecarset.Name), sidecarContainers)
 }
 
-// k8s only allow modify pod.spec.container[x].image,
-// only when annotations[SidecarSetHashWithoutImageAnnotation] is the same, sidecarSet can upgrade pods
-func (c *commonControl) IsSidecarSetUpgradable(pod *v1.Pod) bool {
+func (c *commonControl) IsSidecarSetUpgradable(pod *v1.Pod) (canUpgrade, consistent bool) {
 	sidecarSet := c.GetSidecarset()
+	// k8s only allow modify pod.spec.container[x].image,
+	// only when annotations[SidecarSetHashWithoutImageAnnotation] is the same, sidecarSet can upgrade pods
 	if GetPodSidecarSetWithoutImageRevision(sidecarSet.Name, pod) != GetSidecarSetWithoutImageRevision(sidecarSet) {
-		return false
+		return false, false
 	}
 
 	// cStatus: container.name -> containerStatus.Ready
@@ -200,11 +201,11 @@ func (c *commonControl) IsSidecarSetUpgradable(pod *v1.Pod) bool {
 		// indicates that sidecar container is in the process of being upgraded
 		// wait for the last upgrade to complete before performing this upgrade
 		if cStatus[sidecar] && !c.IsPodStateConsistent(pod, sets.NewString(sidecar)) {
-			return false
+			return true, false
 		}
 	}
 
-	return true
+	return true, true
 }
 
 func (c *commonControl) IsPodAvailabilityChanged(pod, oldPod *v1.Pod) bool {
@@ -222,8 +223,8 @@ func IsSidecarContainerUpdateCompleted(pod *v1.Pod, sidecarSets, containers sets
 		return true
 		// this won't happen in practice, unless someone manually edit pod annotations
 	} else if err := json.Unmarshal([]byte(stateStr), &sidecarUpdateStates); err != nil {
-		klog.V(5).Infof("parse pod(%s/%s) annotations[%s] value(%s) failed: %s",
-			pod.Namespace, pod.Name, SidecarsetInplaceUpdateStateKey, stateStr, err.Error())
+		klog.V(5).InfoS("Failed to parse pod annotations value", "pod", klog.KObj(pod),
+			"annotation", SidecarsetInplaceUpdateStateKey, "value", stateStr, "error", err)
 		return false
 	}
 
@@ -254,7 +255,8 @@ func IsSidecarContainerUpdateCompleted(pod *v1.Pod, sidecarSets, containers sets
 			// we assume that users should not update workload template with new image
 			// which actually has the same imageID as the old image
 			if oldStatus.ImageID == cs.ImageID && containerImages[cs.Name] != cs.Image {
-				klog.V(5).Infof("pod(%s/%s) container %s status imageID not changed, then inconsistent", pod.Namespace, pod.Name, cs.Name)
+				klog.V(5).InfoS("Pod container status imageID not changed, then inconsistent",
+					"pod", klog.KObj(pod), "containerStatusName", cs.Name)
 				return false
 			}
 		}

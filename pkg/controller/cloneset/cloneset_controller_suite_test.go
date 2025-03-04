@@ -26,11 +26,9 @@ import (
 	"sync"
 	"testing"
 
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+
 	"github.com/onsi/gomega"
-	"github.com/openkruise/kruise/apis"
-	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
-	clonesettest "github.com/openkruise/kruise/pkg/controller/cloneset/test"
-	"github.com/openkruise/kruise/pkg/util"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
@@ -42,12 +40,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+
+	"github.com/openkruise/kruise/apis"
+	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
+	clonesettest "github.com/openkruise/kruise/pkg/controller/cloneset/test"
+	"github.com/openkruise/kruise/pkg/util"
 )
 
 func init() {
 	testscheme = k8sruntime.NewScheme()
-	_ = corev1.AddToScheme(testscheme)
-	_ = appsv1alpha1.AddToScheme(testscheme)
+	utilruntime.Must(corev1.AddToScheme(testscheme))
+	utilruntime.Must(appsv1alpha1.AddToScheme(testscheme))
 }
 
 var testscheme *k8sruntime.Scheme
@@ -59,7 +62,7 @@ func TestMain(m *testing.M) {
 	t := &envtest.Environment{
 		CRDDirectoryPaths: []string{filepath.Join("..", "..", "..", "config", "crd", "bases")},
 	}
-	apis.AddToScheme(scheme.Scheme)
+	utilruntime.Must(apis.AddToScheme(scheme.Scheme))
 
 	var err error
 	if cfg, err = t.Start(); err != nil {

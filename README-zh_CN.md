@@ -66,6 +66,14 @@ OpenKruise (官网: [https://openkruise.io](https://openkruise.io)) 是CNCF([Clo
 - 安装/升级 Kruise [稳定版本](https://openkruise.io/docs/installation)
 - 安装/升级 Kruise [最新版本（包括 alpha/beta/rc）](https://openkruise.io/docs/next/installation)
 
+### 在阿里云上快速体验
+
+- 3分钟内在阿里云上创建 Kruise 体验环境:
+
+  <a href="https://acs.console.aliyun.com/quick-deploy?repo=openkruise/charts&branch=master&paths=%5B%22versions/kruise/1.7.3%22%5D" target="_blank">
+    <img src="https://img.alicdn.com/imgextra/i1/O1CN01aiPSuA1Wiz7wkgF5u_!!6000000002823-55-tps-399-70.svg" width="200" alt="Deploy on Alibaba Cloud">
+  </a>
+
 ## 用户
 
 登记: [如果贵司正在使用 Kruise 请留言](https://github.com/openkruise/kruise/issues/289)
@@ -92,10 +100,15 @@ OpenKruise (官网: [https://openkruise.io](https://openkruise.io)) 是CNCF([Clo
 - 钉钉：搜索群ID `23330762` (*Chinese*)
 - 微信：添加用户 `openkruise` 并让机器人拉你入群 (*Chinese*)
 - 社区双周会 (APAC, *Chinese*):
-  - 周四 19:00 GMT+8 (Asia/Shanghai)
-  - [进入会议(zoom)](https://us02web.zoom.us/j/87059136652?pwd=NlI4UThFWXVRZkxIU0dtR1NINncrQT09)
+  - 周四 19:30 GMT+8 (Asia/Shanghai)
+  - 进入会议(钉钉): 搜索群ID `23330762`
   - [会议纪要](https://shimo.im/docs/gXqmeQOYBehZ4vqo)
 - Bi-weekly Community Meeting (*English*): TODO
+  - [进入会议(zoom)](https://us02web.zoom.us/j/87059136652?pwd=NlI4UThFWXVRZkxIU0dtR1NINncrQT09)
+
+## 安全
+
+汇报安全漏洞请通过邮箱kubernetes-security@service.aliyun.com, 更多安全细节并参见[SECURITY.md](SECURITY.md)
 
 ## License
 

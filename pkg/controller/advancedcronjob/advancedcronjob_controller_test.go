@@ -17,14 +17,15 @@ limitations under the License.
 package advancedcronjob
 
 import (
+	"context"
 	"flag"
 	"testing"
 	"time"
 
-	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+
 	"github.com/robfig/cron/v3"
 	"github.com/stretchr/testify/assert"
-	"golang.org/x/net/context"
 	batchv1 "k8s.io/api/batch/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,6 +37,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
+	"github.com/openkruise/kruise/pkg/util/fieldindex"
 )
 
 func init() {
@@ -105,8 +109,8 @@ func TestScheduleWithTimeZone(t *testing.T) {
 // Test scenario:
 func TestReconcileAdvancedJobCreateBroadcastJob(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = appsv1alpha1.AddToScheme(scheme)
-	_ = v1.AddToScheme(scheme)
+	utilruntime.Must(appsv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(v1.AddToScheme(scheme))
 
 	// A job
 	job1 := createJob("job1", broadcastJobTemplate())
@@ -118,7 +122,7 @@ func TestReconcileAdvancedJobCreateBroadcastJob(t *testing.T) {
 	// Node3 does not have pod running
 	node3 := createNode("node3")
 
-	reconcileJob := createReconcileJob(scheme, job1, node1, node2, node3)
+	reconcileJob := createReconcileJobWithBroadcastJobIndex(scheme, job1, node1, node2, node3)
 
 	request := reconcile.Request{
 		NamespacedName: types.NamespacedName{
@@ -142,9 +146,9 @@ func TestReconcileAdvancedJobCreateBroadcastJob(t *testing.T) {
 
 func TestReconcileAdvancedJobCreateJob(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = appsv1alpha1.AddToScheme(scheme)
-	_ = batchv1.AddToScheme(scheme)
-	_ = v1.AddToScheme(scheme)
+	utilruntime.Must(appsv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(batchv1.AddToScheme(scheme))
+	utilruntime.Must(v1.AddToScheme(scheme))
 
 	// A job
 	job1 := createJob("job2", jobTemplate())
@@ -156,7 +160,7 @@ func TestReconcileAdvancedJobCreateJob(t *testing.T) {
 	// Node3 does not have pod running
 	node3 := createNode("node3")
 
-	reconcileJob := createReconcileJob(scheme, job1, node1, node2, node3)
+	reconcileJob := createReconcileJobWithBatchJobIndex(scheme, job1, node1, node2, node3)
 
 	request := reconcile.Request{
 		NamespacedName: types.NamespacedName{
@@ -178,8 +182,38 @@ func TestReconcileAdvancedJobCreateJob(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func createReconcileJob(scheme *runtime.Scheme, initObjs ...client.Object) ReconcileAdvancedCronJob {
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(initObjs...).Build()
+func createReconcileJobWithBroadcastJobIndex(scheme *runtime.Scheme, initObjs ...client.Object) ReconcileAdvancedCronJob {
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(initObjs...).
+		WithIndex(&appsv1alpha1.BroadcastJob{}, fieldindex.IndexNameForController, func(rawObj client.Object) []string {
+			job := rawObj.(*appsv1alpha1.BroadcastJob)
+			owner := metav1.GetControllerOf(job)
+			if owner == nil {
+				return nil
+			}
+			return []string{owner.Name}
+		}).WithStatusSubresource(&appsv1alpha1.AdvancedCronJob{}).Build()
+	eventBroadcaster := record.NewBroadcaster()
+	recorder := eventBroadcaster.NewRecorder(scheme, v1.EventSource{Component: "advancedcronjob-controller"})
+	reconcileJob := ReconcileAdvancedCronJob{
+		Client:   fakeClient,
+		scheme:   scheme,
+		recorder: recorder,
+	}
+	return reconcileJob
+}
+
+func createReconcileJobWithBatchJobIndex(scheme *runtime.Scheme, initObjs ...client.Object) ReconcileAdvancedCronJob {
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(initObjs...).
+		WithIndex(&batchv1.Job{}, fieldindex.IndexNameForController, func(rawObj client.Object) []string {
+			job := rawObj.(*batchv1.Job)
+			owner := metav1.GetControllerOf(job)
+			if owner == nil {
+				return nil
+			}
+			return []string{owner.Name}
+		}).WithStatusSubresource(&appsv1alpha1.AdvancedCronJob{}).Build()
 	eventBroadcaster := record.NewBroadcaster()
 	recorder := eventBroadcaster.NewRecorder(scheme, v1.EventSource{Component: "advancedcronjob-controller"})
 	reconcileJob := ReconcileAdvancedCronJob{

@@ -23,12 +23,10 @@ import (
 
 	"github.com/onsi/ginkgo"
 	"github.com/onsi/gomega"
-	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
-	policyv1alpha1 "github.com/openkruise/kruise/apis/policy/v1alpha1"
-	kruiseclientset "github.com/openkruise/kruise/pkg/client/clientset/versioned"
-	"github.com/openkruise/kruise/test/e2e/framework"
 	apps "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	networkingv1beta1 "k8s.io/api/networking/v1beta1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -36,10 +34,16 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/dynamic"
 	clientset "k8s.io/client-go/kubernetes"
 	utilpointer "k8s.io/utils/pointer"
+
+	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
+	policyv1alpha1 "github.com/openkruise/kruise/apis/policy/v1alpha1"
+	kruiseclientset "github.com/openkruise/kruise/pkg/client/clientset/versioned"
+	"github.com/openkruise/kruise/test/e2e/framework"
 )
 
 const (
@@ -66,7 +70,7 @@ var _ = SIGDescribe("DeletionProtection", func() {
 	})
 
 	framework.KruiseDescribe("namespace deletion", func() {
-		ginkgo.It("should be protected", func() {
+		ginkgo.It("ns should be protected", func() {
 			ns := &v1.Namespace{ObjectMeta: metav1.ObjectMeta{
 				Name:   "kruise-e2e-deletion-protection-" + randStr,
 				Labels: map[string]string{policyv1alpha1.DeletionProtectionKey: policyv1alpha1.DeletionProtectionTypeAlways},
@@ -113,20 +117,27 @@ var _ = SIGDescribe("DeletionProtection", func() {
 			}, 5*time.Second, time.Second).Should(gomega.Equal(int32(0)))
 
 			ginkgo.By("Create a PVC in this namespace")
+			nodeList, err := c.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(len(nodeList.Items)).ShouldNot(gomega.BeZero())
+			nodeName := nodeList.Items[0].Name
 			pvcName := "pvc-" + randStr
-			storageClassName := ""
+			storageClassName := "standard"
 			pvc := &v1.PersistentVolumeClaim{
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: ns.Name,
 					Name:      pvcName,
+					Annotations: map[string]string{
+						"volume.kubernetes.io/selected-node": nodeName,
+					},
 				},
 				Spec: v1.PersistentVolumeClaimSpec{
 					AccessModes: []v1.PersistentVolumeAccessMode{
 						v1.ReadWriteOnce,
 					},
-					Resources: v1.ResourceRequirements{
+					Resources: v1.VolumeResourceRequirements{
 						Requests: v1.ResourceList{
-							v1.ResourceStorage: resource.MustParse("1Gi"),
+							v1.ResourceStorage: resource.MustParse("50Mi"),
 						},
 					},
 					StorageClassName: &storageClassName,
@@ -135,33 +146,6 @@ var _ = SIGDescribe("DeletionProtection", func() {
 			_, err = c.CoreV1().PersistentVolumeClaims(ns.Name).Create(context.TODO(), pvc, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			ginkgo.By("Create a PV bound to the PVC just created")
-			pvName := "pv-" + randStr
-			pv := &v1.PersistentVolume{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: pvName,
-				},
-				Spec: v1.PersistentVolumeSpec{
-					Capacity: v1.ResourceList{
-						v1.ResourceStorage: resource.MustParse("1Gi"),
-					},
-					AccessModes: []v1.PersistentVolumeAccessMode{
-						v1.ReadWriteOnce,
-					},
-					StorageClassName: "",
-					ClaimRef: &v1.ObjectReference{
-						Namespace: ns.Name,
-						Name:      pvcName,
-					},
-					PersistentVolumeSource: v1.PersistentVolumeSource{
-						HostPath: &v1.HostPathVolumeSource{
-							Path: "/mnt",
-						},
-					},
-				},
-			}
-			_, err = framework.CreatePV(c, pv)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Eventually(func() bool {
 				pvc, err := c.CoreV1().PersistentVolumeClaims(ns.Name).Get(context.TODO(), pvcName, metav1.GetOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -173,18 +157,10 @@ var _ = SIGDescribe("DeletionProtection", func() {
 			gomega.Expect(err).To(gomega.HaveOccurred())
 			gomega.Expect(err.Error()).Should(gomega.ContainSubstring(deleteForbiddenMessage))
 
-			ginkgo.By("Delete the PV bounded to PVC")
-			err = c.CoreV1().PersistentVolumes().Delete(context.TODO(), pvName, metav1.DeleteOptions{})
-			_, err = c.CoreV1().PersistentVolumes().Patch(context.TODO(), pvName, types.StrategicMergePatchType,
-				[]byte(`{"metadata":{"finalizers":null}}`), metav1.PatchOptions{})
+			ginkgo.By("Delete the PVC just created")
+			err = c.CoreV1().PersistentVolumeClaims(ns.Name).Delete(context.TODO(), pvcName, metav1.DeleteOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Eventually(func() bool {
-				pvc, err := c.CoreV1().PersistentVolumeClaims(ns.Name).Get(context.TODO(), pvcName, metav1.GetOptions{})
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				return pvc.Status.Phase != v1.ClaimBound
-			}, 5*time.Second, time.Second).Should(gomega.BeTrue())
-
-			time.Sleep(time.Second)
+			time.Sleep(3 * time.Second)
 			ginkgo.By("Delete the namespace successfully")
 			err = c.CoreV1().Namespaces().Delete(context.TODO(), ns.Name, metav1.DeleteOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -368,6 +344,146 @@ var _ = SIGDescribe("DeletionProtection", func() {
 
 			ginkgo.By("Delete the Deployment should successful")
 			err = c.AppsV1().Deployments(ns).Delete(context.TODO(), deploy.Name, metav1.DeleteOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+	})
+
+	framework.KruiseDescribe("Service deletion", func() {
+		ginkgo.It("should be protected", func() {
+			ginkgo.By("Create a Service with Always")
+			name := "svc-" + randStr
+			svc := &v1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: ns,
+					Name:      name,
+					Labels:    map[string]string{policyv1alpha1.DeletionProtectionKey: policyv1alpha1.DeletionProtectionTypeAlways},
+				},
+				Spec: v1.ServiceSpec{
+					Selector: map[string]string{"owner": "foo"},
+					Ports: []v1.ServicePort{
+						{Port: 80, Name: "http", Protocol: v1.ProtocolTCP},
+					},
+				},
+			}
+			_, err := c.CoreV1().Services(ns).Create(context.TODO(), svc, metav1.CreateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			ginkgo.By("Delete the Service should be rejected")
+			err = c.CoreV1().Services(ns).Delete(context.TODO(), svc.Name, metav1.DeleteOptions{})
+			gomega.Expect(err).To(gomega.HaveOccurred())
+			gomega.Expect(err.Error()).Should(gomega.ContainSubstring(deleteForbiddenMessage))
+
+			ginkgo.By("Patch the Service deletion to null")
+			_, err = c.CoreV1().Services(ns).Patch(context.TODO(), svc.Name, types.StrategicMergePatchType,
+				[]byte(fmt.Sprintf(`{"metadata":{"labels":{"%s":null}}}`, policyv1alpha1.DeletionProtectionKey)), metav1.PatchOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			ginkgo.By("Delete the Service successfully")
+			err = c.CoreV1().Services(ns).Delete(context.TODO(), svc.Name, metav1.DeleteOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+	})
+
+	framework.KruiseDescribe("Ingress deletion", func() {
+		ginkgo.It("should be protected", func() {
+			ginkgo.By("Create a Ingress with Always")
+			name := "ing-" + randStr
+			pathType := networkingv1.PathTypePrefix
+			ing := &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      name,
+					Namespace: ns,
+					Labels:    map[string]string{policyv1alpha1.DeletionProtectionKey: policyv1alpha1.DeletionProtectionTypeAlways},
+				},
+				Spec: networkingv1.IngressSpec{
+					Rules: []networkingv1.IngressRule{
+						{
+							Host: "foo.bar.com",
+							IngressRuleValue: networkingv1.IngressRuleValue{
+								HTTP: &networkingv1.HTTPIngressRuleValue{
+									Paths: []networkingv1.HTTPIngressPath{
+										{
+											Path:     "/",
+											PathType: &pathType,
+											Backend: networkingv1.IngressBackend{
+												Service: &networkingv1.IngressServiceBackend{
+													Name: "test",
+													Port: networkingv1.ServiceBackendPort{
+														Number: 80,
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+			_, err := c.NetworkingV1().Ingresses(ns).Create(context.TODO(), ing, metav1.CreateOptions{})
+
+			// for the cluster using old Kubernetes version, use networking.k8s.io/v1beta1 instead of networking.k8s.io/v1 to create Ingress resource
+			if err != nil && err.Error() == "the server could not find the requested resource" {
+				err = nil
+				pathType := networkingv1beta1.PathTypePrefix
+				ing := &networkingv1beta1.Ingress{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      name,
+						Namespace: ns,
+						Labels:    map[string]string{policyv1alpha1.DeletionProtectionKey: policyv1alpha1.DeletionProtectionTypeAlways},
+					},
+					Spec: networkingv1beta1.IngressSpec{
+						Rules: []networkingv1beta1.IngressRule{
+							{
+								Host: "foo.bar.com",
+								IngressRuleValue: networkingv1beta1.IngressRuleValue{
+									HTTP: &networkingv1beta1.HTTPIngressRuleValue{
+										Paths: []networkingv1beta1.HTTPIngressPath{
+											{
+												Path:     "/",
+												PathType: &pathType,
+												Backend: networkingv1beta1.IngressBackend{
+													ServiceName: "test",
+													ServicePort: intstr.FromInt(80),
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				}
+				_, err = c.NetworkingV1beta1().Ingresses(ns).Create(context.TODO(), ing, metav1.CreateOptions{})
+			}
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			ginkgo.By("Delete the Ingress should be rejected")
+			err = c.NetworkingV1().Ingresses(ns).Delete(context.TODO(), ing.Name, metav1.DeleteOptions{})
+			if err != nil && err.Error() == "the server could not find the requested resource" {
+				err = nil
+				err = c.NetworkingV1beta1().Ingresses(ns).Delete(context.TODO(), ing.Name, metav1.DeleteOptions{})
+			}
+			gomega.Expect(err).To(gomega.HaveOccurred())
+			gomega.Expect(err.Error()).Should(gomega.ContainSubstring(deleteForbiddenMessage))
+
+			ginkgo.By("Patch the Ingress deletion to null")
+			_, err = c.NetworkingV1().Ingresses(ns).Patch(context.TODO(), ing.Name, types.StrategicMergePatchType,
+				[]byte(fmt.Sprintf(`{"metadata":{"labels":{"%s":null}}}`, policyv1alpha1.DeletionProtectionKey)), metav1.PatchOptions{})
+			if err != nil && err.Error() == "the server could not find the requested resource" {
+				err = nil
+				_, err = c.NetworkingV1beta1().Ingresses(ns).Patch(context.TODO(), ing.Name, types.StrategicMergePatchType,
+					[]byte(fmt.Sprintf(`{"metadata":{"labels":{"%s":null}}}`, policyv1alpha1.DeletionProtectionKey)), metav1.PatchOptions{})
+			}
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			ginkgo.By("Delete the Ingress successfully")
+			err = c.NetworkingV1().Ingresses(ns).Delete(context.TODO(), ing.Name, metav1.DeleteOptions{})
+			if err != nil && err.Error() == "the server could not find the requested resource" {
+				err = nil
+				err = c.NetworkingV1beta1().Ingresses(ns).Delete(context.TODO(), ing.Name, metav1.DeleteOptions{})
+			}
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 	})

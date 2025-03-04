@@ -23,6 +23,8 @@ import (
 	"net/http"
 	"sync"
 
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+
 	kruiseapis "github.com/openkruise/kruise/apis"
 	"github.com/openkruise/kruise/pkg/client"
 	"github.com/openkruise/kruise/pkg/daemon/containermeta"
@@ -57,8 +59,8 @@ var (
 )
 
 func init() {
-	_ = clientgoscheme.AddToScheme(scheme)
-	_ = kruiseapis.AddToScheme(scheme)
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(kruiseapis.AddToScheme(scheme))
 }
 
 // Runnable allows a component to be started.
@@ -96,7 +98,7 @@ func NewDaemon(cfg *rest.Config, bindAddress string) (Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
-	klog.Infof("Starting daemon on %v ...", nodeName)
+	klog.InfoS("Starting daemon", "nodeName", nodeName)
 
 	listener, err := net.Listen("tcp", bindAddress)
 	if err != nil {
@@ -137,7 +139,7 @@ func NewDaemon(cfg *rest.Config, bindAddress string) (Daemon, error) {
 		Healthz:        healthz,
 	}
 
-	puller, err := imagepuller.NewController(opts, secretManager)
+	puller, err := imagepuller.NewController(opts, secretManager, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to new image puller controller: %v", err)
 	}
